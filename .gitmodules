@@ -1,0 +1,3 @@
+[submodule "supagloo-prompts"]
+	path = supagloo-prompts
+	url = https://github.com/ashtable/supagloo-prompts
