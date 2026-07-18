@@ -158,6 +158,23 @@ describe("formatReport — actionable messages", () => {
     // The failing line is about `prisma`, not `@prisma/client`.
     expect(text).toMatch(/(^|\W)prisma\b/);
   });
+
+  it("keeps the success message to a single line even when both packages are missing", () => {
+    const result = checkPrismaVersion(readFixture("missing-both"), EXPECTED);
+    // Precondition: this is the missing-both case and it passes (tolerant).
+    expect(result.ok).toBe(true);
+    expect(statusOf(result, "@prisma/client")).toBe("missing");
+    expect(statusOf(result, "prisma")).toBe("missing");
+
+    const text = formatReport(result);
+    expect(text).toContain("OK");
+    expect(text).toContain(EXPECTED);
+    expect(text).toContain("@supagloo/database-lib");
+    // Contract: success output is exactly one line — missing packages are never
+    // surfaced on success (no "Note:" annotation appended).
+    expect(text.split("\n")).toHaveLength(1);
+    expect(text).not.toContain("Note:");
+  });
 });
 
 describe("runCli — reads a consumer package.json and returns an exit code", () => {

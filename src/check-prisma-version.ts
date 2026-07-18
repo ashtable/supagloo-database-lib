@@ -117,15 +117,10 @@ export function formatReport(result: CheckResult): string {
   const { expected } = result;
 
   if (result.ok) {
-    const missing = result.findings
-      .filter((f) => f.status === "missing")
-      .map((f) => f.name);
-    let text = `check-prisma-version: OK — Prisma is pinned to exactly ${expected}, matching @supagloo/database-lib.`;
-    if (missing.length > 0) {
-      const subject = missing.length > 1 ? "they" : "it";
-      text += `\n  Note: ${missing.join(", ")} not declared directly; ${subject} will resolve transitively from @supagloo/database-lib at ${expected}.`;
-    }
-    return text;
+    // Success is always a single line (CLI output contract). `missing` packages
+    // are never surfaced here — kept clean — but remain available programmatically
+    // via CheckResult.findings for any consumer that wants them.
+    return `check-prisma-version: OK — Prisma is pinned to exactly ${expected}, matching @supagloo/database-lib.`;
   }
 
   const who = result.consumerName ? `"${result.consumerName}"` : "this package";
