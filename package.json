@@ -1,0 +1,39 @@
+{
+  "name": "@supagloo/database-lib",
+  "version": "0.0.3",
+  "description": "Shared Prisma client, types, and Zod schemas for the Supagloo platform (API, DBOS, Next.js).",
+  "private": true,
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "supagloo": {
+    "prismaVersion": "7.8.0"
+  },
+  "scripts": {
+    "prisma:generate": "prisma generate",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "clean": "rm -rf dist src/generated",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "prisma": "7.8.0",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}

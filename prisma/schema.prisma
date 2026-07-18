@@ -1,0 +1,19 @@
+// Minimal bootstrap schema (Task #1). Zero models on purpose — real models
+// land in later tasks (#4/#5). This exists so `prisma generate` produces a real
+// generated client that gets compiled into dist/ and shipped with the package.
+//
+// Prisma 7 note: the datasource block no longer accepts `url`/`env(...)`. The
+// connection URL is supplied at runtime via a driver adapter (or prisma.config.ts
+// for the CLI), which is a later concern — only the API repo runs migrations.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "cjs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
