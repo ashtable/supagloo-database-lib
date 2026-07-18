@@ -23,8 +23,11 @@
     "prisma:generate": "prisma generate",
     "build": "prisma generate && tsc -p tsconfig.json",
     "clean": "rm -rf dist src/generated",
+    "pretest": "prisma generate",
     "test": "vitest run",
+    "pretest:unit": "prisma generate",
     "test:unit": "vitest run",
+    "pretest:e2e": "prisma generate",
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {

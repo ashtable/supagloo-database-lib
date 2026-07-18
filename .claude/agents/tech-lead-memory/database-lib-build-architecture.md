@@ -40,9 +40,15 @@ heavy generated client. Invariant (unit-tested in `src/prisma-version.test.ts`):
   runtime / `prisma.config.ts` for the CLI. Minimal schema is just
   `provider = "postgresql"`. `prisma generate` needs no DB and no config file.
 - **`src/generated/` is gitignored** (build artifact). Consequence: `prisma
-  generate` (part of `npm run build`) MUST run before the unit suite, because
-  `src/index.ts` re-exports `./generated/prisma/client`. Fresh checkouts must
-  build first.
+  generate` MUST run before the unit suite, because `src/index.ts` re-exports
+  `./generated/prisma/client`. **Resolved (2026-07-17, Task #1 revision):** the
+  test scripts now self-provision via npm pre-hooks — `pretest`, `pretest:unit`,
+  and `pretest:e2e` each run `prisma generate` (npm auto-runs `pre<script>`
+  before `<script>`). So `npm test` / `test:unit` / `test:e2e` work on a fresh
+  checkout with no prior build. `prisma generate` here is offline and
+  ~milliseconds (zero-model schema, no DB/network). Repro of the old failure:
+  `rm -rf dist src/generated && npm run test:unit` was exit 1
+  (`Cannot find module './generated/prisma/client'`); now Green.
 - **`files: ["dist", "prisma"]`** ships `dist/**` in the npm tarball even though
   `dist` is gitignored — the `files` allowlist overrides `.gitignore` (verified
   via `npm pack`). Without an allowlist, npm falls back to `.gitignore` and would
