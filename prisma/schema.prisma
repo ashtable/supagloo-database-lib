@@ -17,3 +17,73 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// --- Task #4: identity, sessions, provider connections (design-delta §2.1–2.5) ---
+// Connection URL is supplied by prisma.config.ts (CLI/migrations) and by the
+// createPrismaClient() driver-adapter factory (runtime) — never inline here.
+
+model User {
+  id                    String    @id @default(cuid())
+  youversionUserId      String    @unique
+  displayName           String
+  email                 String
+  avatarInitials        String
+  firstSignInAt         DateTime  @default(now())
+  onboardingCompletedAt DateTime?
+  lastSeenAt            DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  sessions   Session[]
+  github     GithubConnection?
+  openrouter OpenRouterConnection?
+  gloo       GlooConnection?
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// GitHub App installation (§2.3). installationId is the ONLY stored
+// credential-pointer; no long-lived repo token is ever persisted — tokens are
+// minted on demand. There is deliberately NO token column on this model.
+model GithubConnection {
+  userId              String   @id
+  githubLogin         String
+  installationId      String
+  repositorySelection String
+  status              String
+  connectedAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OpenRouterConnection {
+  userId           String   @id
+  apiKeyCiphertext String
+  keyLast4         String
+  status           String
+  connectedAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GlooConnection {
+  userId                 String   @id
+  clientId               String
+  clientSecretCiphertext String
+  status                 String
+  connectedAt            DateTime @default(now())
+  lastVerifiedAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
