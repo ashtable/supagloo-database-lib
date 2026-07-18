@@ -14,4 +14,4 @@ individual files, never here.
 - [Non-UI e2e run via node test runner](non-ui-e2e-runner.md) — how integration tests are invoked
 -->
 
-_(none yet)_
+- [database-lib build architecture](database-lib-build-architecture.md) — Prisma 7 `prisma-client` generator + CJS tsc → dist; dep layout, version pin, gotchas
