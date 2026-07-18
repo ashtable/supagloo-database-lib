@@ -10,7 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./check-prisma-version": {
+      "types": "./dist/check-prisma-version.d.ts",
+      "default": "./dist/check-prisma-version.js"
     }
+  },
+  "bin": {
+    "check-prisma-version": "dist/check-prisma-version.cli.js"
   },
   "files": [
     "dist",

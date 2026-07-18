@@ -1,0 +1,11 @@
+{
+  "name": "consumer-wildcard",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "*"
+  },
+  "devDependencies": {
+    "prisma": "*"
+  }
+}

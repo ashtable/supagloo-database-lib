@@ -15,3 +15,4 @@ individual files, never here.
 -->
 
 - [database-lib build architecture](database-lib-build-architecture.md) — Prisma 7 `prisma-client` generator + CJS tsc → dist; dep layout, version pin, gotchas
+- [check-prisma-version tool](check-prisma-version-tool.md) — consumer-side exact-pin enforcement (bin + subpath export); pass/fail policy; why `missing` is tolerated
