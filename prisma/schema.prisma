@@ -38,6 +38,14 @@ model User {
   github     GithubConnection?
   openrouter OpenRouterConnection?
   gloo       GlooConnection?
+
+  // --- Task #5 back-relations (virtual; FK columns live on the child side) ---
+  projects       Project[]
+  renderJobs     RenderJob[]
+  aiGenerations  AiGeneration[]
+  projectJobs    ProjectJob[]
+  galleryItems   GalleryItem[]
+  galleryUpvotes GalleryUpvote[]
 }
 
 model Session {
@@ -86,4 +94,258 @@ model GlooConnection {
   lastVerifiedAt         DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --- Task #5: projects, versions, jobs, renders, gallery (design-delta §2.6–2.9) ---
+//
+// Enums are fully specified by the design doc, so they are real Prisma enums
+// (Task #4's underspecified status fields stayed plain String). No @map/@@map —
+// camelCase Prisma names equal Postgres names verbatim.
+//
+// Composition/Scene are deliberately absent: the Remotion composition is a
+// repo-committed `supagloo.project.json` manifest (memory:
+// composition-source-of-truth-in-repo), never a Postgres table. AiGeneration
+// carries a plain `sceneId` string (a manifest scene id, not a DB FK).
+//
+// `id` on RenderJob / AiGeneration / ProjectJob has NO @default: the id IS the
+// DBOS workflow id, supplied by the caller at enqueue time. Surrogate-PK models
+// (Project, ProjectVersion, GalleryItem, GalleryUpvote) use cuid(), per #4.
+//
+// onDelete: every FK is Cascade — to User (the #4 convention) and to the
+// owning aggregate root (owned-child rule). See the Task #5 TDD plan §1 for the
+// shared-JobStatus and all-Cascade decisions (both flagged for review).
+
+enum RepoVisibility {
+  private
+  public
+}
+
+enum ProjectCreatedFrom {
+  votd
+  passage
+  blank
+  demo
+  import
+}
+
+enum ProjectVersionState {
+  base
+  working
+  published
+  archived
+}
+
+enum RenderStatus {
+  queued
+  bundling
+  synthesizing
+  encoding
+  uploading
+  completed
+  failed
+  canceled
+}
+
+enum GalleryVisibility {
+  public
+  unlisted
+}
+
+enum AiGenerationKind {
+  storyboard
+  script
+  image
+  narration
+  music
+  video
+}
+
+enum AiProvider {
+  gloo
+  openrouter
+}
+
+enum ProjectJobKind {
+  scaffold
+  import_verify
+  commit
+  publish
+}
+
+// Shared by ProjectJob.status AND AiGeneration.status — identical lifecycle for
+// both DBOS-workflow-backed job tables (queued → running → terminal). RenderJob
+// keeps its own richer RenderStatus. See TDD plan §1 #1.
+enum JobStatus {
+  queued
+  running
+  succeeded
+  failed
+  canceled
+}
+
+model Project {
+  id                String             @id @default(cuid())
+  slug              String
+  ownerId           String
+  name              String
+  repoOwner         String
+  repoName          String
+  repoVisibility    RepoVisibility
+  createdFrom       ProjectCreatedFrom
+  currentBranch     String
+  thumbnailAssetKey String?
+  lastRenderJobId   String?
+  lastOpenedAt      DateTime           @default(now())
+  createdAt         DateTime           @default(now())
+  deletedAt         DateTime? // soft delete — the repo's first soft-delete field
+
+  owner         User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  versions      ProjectVersion[]
+  jobs          ProjectJob[]
+  renderJobs    RenderJob[]
+  aiGenerations AiGeneration[]
+  galleryItems  GalleryItem[]
+
+  @@unique([ownerId, slug]) // slug is unique PER OWNER, not globally
+  @@index([ownerId])
+}
+
+model ProjectVersion {
+  id            String              @id @default(cuid())
+  projectId     String
+  semver        String
+  branchName    String
+  state         ProjectVersionState
+  commitMessage String?
+  autoSummary   String?
+  changedFiles  Json
+  headCommitSha String?
+  prNumber      Int?
+  prUrl         String?
+  publishedAt   DateTime?
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  renderJobs  RenderJob[]
+  projectJobs ProjectJob[]
+
+  @@unique([projectId, semver])
+  @@index([projectId])
+}
+
+model RenderJob {
+  id                String       @id // = DBOS workflow id (no @default)
+  projectId         String
+  versionId         String
+  userId            String
+  status            RenderStatus
+  framesDone        Int          @default(0)
+  framesTotal       Int          @default(0)
+  width             Int
+  height            Int
+  fps               Int
+  aspectRatio       String
+  codec             String
+  outputAssetKey    String?
+  thumbnailAssetKey String?
+  runInBackground   Boolean
+  error             String?
+  createdAt         DateTime     @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version     ProjectVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  galleryItem GalleryItem?
+
+  @@index([projectId])
+  @@index([versionId])
+  @@index([userId])
+}
+
+model AiGeneration {
+  id             String           @id // = DBOS workflow id (no @default)
+  userId         String
+  projectId      String?
+  sceneId        String? // manifest scene id — NOT a DB FK (scenes aren't persisted)
+  kind           AiGenerationKind
+  provider       AiProvider
+  model          String
+  input          Json
+  status         JobStatus
+  providerJobId  String? // persisted immediately post-submit for replay safety
+  resultJson     Json?
+  resultAssetKey String?
+  error          String?
+  tokenUsage     Json?
+  createdAt      DateTime         @default(now())
+  completedAt    DateTime?
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([projectId])
+}
+
+model GalleryItem {
+  id                 String            @id @default(cuid())
+  renderJobId        String            @unique // one gallery entry per render
+  projectId          String
+  ownerId            String
+  title              String
+  description        String
+  scriptureReference String
+  translation        String
+  scriptureBook      String // normalized book code (e.g. GEN) — drives the filter
+  durationSeconds    Int
+  videoAssetKey      String
+  thumbnailAssetKey  String
+  visibility         GalleryVisibility
+  publishedAt        DateTime          @default(now())
+  upvoteCount        Int               @default(0) // denormalized; updated txn-ally with GalleryUpvote
+  viewCount          Int               @default(0)
+
+  renderJob RenderJob       @relation(fields: [renderJobId], references: [id], onDelete: Cascade)
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner     User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  upvotes   GalleryUpvote[]
+
+  @@index([projectId])
+  @@index([ownerId])
+  @@index([scriptureBook])
+}
+
+model GalleryUpvote {
+  id            String   @id @default(cuid())
+  userId        String
+  galleryItemId String
+  createdAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  galleryItem GalleryItem @relation(fields: [galleryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, galleryItemId])
+  @@index([galleryItemId])
+}
+
+model ProjectJob {
+  id          String         @id // = DBOS workflow id (no @default)
+  projectId   String
+  userId      String
+  versionId   String?
+  kind        ProjectJobKind
+  status      JobStatus
+  stages      Json // array of { key, label, state: pending|running|done|failed }
+  error       String?
+  createdAt   DateTime       @default(now())
+  completedAt DateTime?
+
+  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version ProjectVersion? @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([versionId])
 }
