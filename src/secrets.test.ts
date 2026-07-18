@@ -128,8 +128,12 @@ describe("encryptSecret / decryptSecret", () => {
     const wrongVersion = Buffer.alloc(HEADER_BYTES + 4);
     wrongVersion[0] = 0x02;
     const badVersion = pack(wrongVersion);
+    // Not valid base64 at all: Node's Buffer.from(_, "base64") silently drops
+    // invalid chars rather than throwing, decoding to < HEADER_BYTES bytes, so
+    // this still lands in the MALFORMED_PAYLOAD (too-short) branch.
+    const nonBase64Junk = "not-valid-base64!!!___###";
 
-    for (const bad of [tooShort, badVersion]) {
+    for (const bad of [tooShort, badVersion, nonBase64Junk]) {
       const err = catchError(() => decryptSecret(bad, KEY));
       expect(err).toBeInstanceOf(SecretCryptoError);
       expect((err as SecretCryptoError).code).toBe("MALFORMED_PAYLOAD");

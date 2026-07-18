@@ -139,6 +139,17 @@ describe("e2e: secrets encryption against Compose Postgres", () => {
     expect(row?.clientSecretCiphertext).not.toBe(plaintext);
     // The public clientId is stored plaintext; only the secret is ciphertext.
     expect(row?.clientId).toBe("client_public_id");
+
+    // Belt-and-braces: the raw column text does not contain the plaintext.
+    const raw = await client.$queryRawUnsafe<
+      Array<{ clientSecretCiphertext: string }>
+    >(
+      `SELECT "clientSecretCiphertext" FROM "GlooConnection" WHERE "userId" = $1`,
+      user.id,
+    );
+    expect(raw[0]?.clientSecretCiphertext).toBe(ciphertext);
+    expect(raw[0]?.clientSecretCiphertext.includes(plaintext)).toBe(false);
+
     expect(decryptSecret(row!.clientSecretCiphertext, KEY)).toBe(plaintext);
   });
 
