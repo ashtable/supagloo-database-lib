@@ -1,0 +1,9 @@
+{
+  "name": "consumer-missing-both",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@supagloo/database-lib": "file:../database-lib",
+    "some-other-lib": "1.2.3"
+  }
+}
