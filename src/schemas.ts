@@ -247,3 +247,108 @@ export const RenderOutputSpecSchema = CompositionSpecSchema.extend({
   codec: z.string().min(1),
 });
 export type RenderOutputSpec = z.infer<typeof RenderOutputSpecSchema>;
+
+// ===========================================================================
+// Auth / session WIRE DTOs (Task #10 — design-delta §2.1/§2.2/§6a/§8)
+// ---------------------------------------------------------------------------
+// The FIRST request/response (wire) DTOs in this file — everything above is
+// domain/content. These are the API<->BFF contract for sign-in, session, and the
+// flag-gated test-seed endpoint. Date fields are ISO-8601 strings on the wire
+// (the Prisma models carry real Date columns; the API serializes them).
+//
+// The wire user is `AuthUser` (NOT `User`): the Prisma `User`/`Session` model
+// TYPES are re-exported from this package via `export * from generated/prisma`,
+// so a wire schema named `UserSchema`/`User` would collide. Keeping it `AuthUser`
+// keeps both the star-export and these DTOs importable side by side.
+// ===========================================================================
+
+/** The authenticated user as returned to clients (design-delta §2.1). Prisma
+ *  `DateTime` columns are serialized as ISO-8601 strings; `onboardingCompletedAt`
+ *  is null until onboarding is completed. */
+export const AuthUserSchema = z.object({
+  id: z.string(),
+  youversionUserId: z.string(),
+  displayName: z.string(),
+  email: z.string(),
+  avatarInitials: z.string(),
+  firstSignInAt: z.string(),
+  onboardingCompletedAt: z.string().nullable(),
+  lastSeenAt: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AuthUser = z.infer<typeof AuthUserSchema>;
+
+/** `POST /v1/auth/youversion` request: the YouVersion access token the browser
+ *  obtained client-side and the BFF forwards for server-side verification. */
+export const YouVersionSignInRequestSchema = z.object({
+  accessToken: z.string().min(1),
+});
+export type YouVersionSignInRequest = z.infer<
+  typeof YouVersionSignInRequestSchema
+>;
+
+/** `POST /v1/auth/youversion` response: the raw opaque session token (only its
+ *  SHA-256 hash is persisted), the user, and a transient `firstSignIn` flag —
+ *  true iff this sign-in created the user row. */
+export const YouVersionSignInResponseSchema = z.object({
+  token: z.string().min(1),
+  user: AuthUserSchema,
+  firstSignIn: z.boolean(),
+});
+export type YouVersionSignInResponse = z.infer<
+  typeof YouVersionSignInResponseSchema
+>;
+
+/** `GET /v1/me` response. */
+export const MeResponseSchema = z.object({
+  user: AuthUserSchema,
+});
+export type MeResponse = z.infer<typeof MeResponseSchema>;
+
+/** `PATCH /v1/me/onboarding` response (the user with `onboardingCompletedAt`
+ *  now set). */
+export const OnboardingResponseSchema = z.object({
+  user: AuthUserSchema,
+});
+export type OnboardingResponse = z.infer<typeof OnboardingResponseSchema>;
+
+/** `POST /v1/auth/signout` response. Revocation is DB-backed (§9-Q6): the
+ *  session row is deleted, so `ok:true` means the token is invalidated now. */
+export const SignoutResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type SignoutResponse = z.infer<typeof SignoutResponseSchema>;
+
+/** One user to (idempotently) seed. `sessionToken` is the RAW bearer token the
+ *  test will send; the endpoint stores only its SHA-256 hash. */
+export const TestSeedUserSchema = z.object({
+  youversionUserId: z.string().min(1),
+  displayName: z.string().min(1),
+  email: z.string().min(1),
+  avatarInitials: z.string().min(1),
+  sessionToken: z.string().min(1),
+  onboardingCompleted: z.boolean().optional(),
+});
+export type TestSeedUser = z.infer<typeof TestSeedUserSchema>;
+
+/** `POST /v1/test/seed` request (flag-gated, §9-Q9): deterministic users +
+ *  sessions so e2e can bearer-auth without a real YouVersion OAuth flow. */
+export const TestSeedRequestSchema = z.object({
+  users: z.array(TestSeedUserSchema).min(1),
+});
+export type TestSeedRequest = z.infer<typeof TestSeedRequestSchema>;
+
+/** `POST /v1/test/seed` response: each seeded user plus the raw bearer token
+ *  that now authenticates as it. */
+export const TestSeedResponseSchema = z.object({
+  users: z
+    .array(
+      z.object({
+        user: AuthUserSchema,
+        token: z.string().min(1),
+      }),
+    )
+    .min(1),
+});
+export type TestSeedResponse = z.infer<typeof TestSeedResponseSchema>;
