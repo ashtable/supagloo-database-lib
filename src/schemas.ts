@@ -443,3 +443,117 @@ export const GithubRepoListResponseSchema = z.object({
 export type GithubRepoListResponse = z.infer<
   typeof GithubRepoListResponseSchema
 >;
+
+// ===========================================================================
+// OpenRouter + Gloo connection WIRE DTOs (Task #12 — design-delta §2.5/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the two provider-secret connections plus the merged
+// GET /v1/connections. The per-user secrets (OpenRouter key, Gloo client secret)
+// are AES-256-GCM-encrypted at rest (§2.10, database-lib `encryptSecret`) and NEVER
+// cross the wire — the status DTOs carry only display-safe fragments (`keyLast4`,
+// `clientId`). Date fields are ISO-8601 strings (the Prisma models carry real Date
+// columns; the API serializes them).
+//
+// Wire types are `*ConnectionStatus`-suffixed (NOT bare `OpenRouterConnection` /
+// `GlooConnection`): those bare names are re-exported Prisma model types via
+// `export * from generated/prisma`, so a same-named wire type would collide and be
+// dropped from the barrel (same rule as `GithubConnectionStatus`, `AuthUser`).
+//
+// Endpoint asymmetry is intentional (§8): OpenRouter is created with POST (the
+// browser already did PKCE — no server-side callback), Gloo with PUT (verify-then-
+// store — a client-credentials test mint must succeed before any row is written).
+// ===========================================================================
+
+/** `POST /v1/connections/openrouter` request: the OpenRouter API key the browser
+ *  obtained via PKCE and the BFF forwards. Encrypted before storage; `keyLast4`
+ *  (last 4 chars) is derived from it at write time for masked display. */
+export const OpenRouterConnectRequestSchema = z.object({
+  key: z.string().min(1),
+});
+export type OpenRouterConnectRequest = z.infer<
+  typeof OpenRouterConnectRequestSchema
+>;
+
+/** A stored OpenRouter connection on the wire. Carries ONLY the masked
+ *  `keyLast4` (never the key/ciphertext); the UI composes `sk-or-••••••{keyLast4}`. */
+export const OpenRouterConnectionStatusSchema = z.object({
+  keyLast4: z.string(),
+  status: z.string(),
+  connectedAt: z.string(),
+});
+export type OpenRouterConnectionStatus = z.infer<
+  typeof OpenRouterConnectionStatusSchema
+>;
+
+/** `POST /v1/connections/openrouter` response. */
+export const OpenRouterConnectionResponseSchema = z.object({
+  connection: OpenRouterConnectionStatusSchema,
+});
+export type OpenRouterConnectionResponse = z.infer<
+  typeof OpenRouterConnectionResponseSchema
+>;
+
+/** `GET /v1/connections/openrouter/credits` response: a live proxy to OpenRouter's
+ *  balance (never stored). `remaining = totalCredits − totalUsage`; the UI renders
+ *  `$X.XX credit remaining`. */
+export const OpenRouterCreditsResponseSchema = z.object({
+  totalCredits: z.number(),
+  totalUsage: z.number(),
+  remaining: z.number(),
+});
+export type OpenRouterCreditsResponse = z.infer<
+  typeof OpenRouterCreditsResponseSchema
+>;
+
+/** `DELETE /v1/connections/openrouter` response (idempotent). */
+export const OpenRouterDisconnectResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type OpenRouterDisconnectResponse = z.infer<
+  typeof OpenRouterDisconnectResponseSchema
+>;
+
+/** `PUT /v1/connections/gloo` request: the Gloo OAuth2 client-credentials pair.
+ *  The API mints a client-credentials test token to VERIFY the pair BEFORE storing
+ *  it; `clientSecret` is encrypted at rest, `clientId` is kept plaintext. */
+export const GlooConnectRequestSchema = z.object({
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+});
+export type GlooConnectRequest = z.infer<typeof GlooConnectRequestSchema>;
+
+/** A stored Gloo connection on the wire. Carries the plaintext `clientId` and the
+ *  verification timestamps — NEVER the client secret / its ciphertext. */
+export const GlooConnectionStatusSchema = z.object({
+  clientId: z.string(),
+  status: z.string(),
+  connectedAt: z.string(),
+  lastVerifiedAt: z.string(),
+});
+export type GlooConnectionStatus = z.infer<typeof GlooConnectionStatusSchema>;
+
+/** `PUT /v1/connections/gloo` response. */
+export const GlooConnectionResponseSchema = z.object({
+  connection: GlooConnectionStatusSchema,
+});
+export type GlooConnectionResponse = z.infer<
+  typeof GlooConnectionResponseSchema
+>;
+
+/** `DELETE /v1/connections/gloo` response (idempotent). */
+export const GlooDisconnectResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type GlooDisconnectResponse = z.infer<
+  typeof GlooDisconnectResponseSchema
+>;
+
+/** `GET /v1/connections` response (design-delta §2.5 footnote / §8): the merged
+ *  status of all three typed connection tables, keyed by provider. Each value is
+ *  the provider's status object, or `null` when that provider is not connected. */
+export const ConnectionsResponseSchema = z.object({
+  github: GithubConnectionStatusSchema.nullable(),
+  openrouter: OpenRouterConnectionStatusSchema.nullable(),
+  gloo: GlooConnectionStatusSchema.nullable(),
+});
+export type ConnectionsResponse = z.infer<typeof ConnectionsResponseSchema>;
