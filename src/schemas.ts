@@ -588,3 +588,105 @@ export const FilePresignDownloadResponseSchema = z.object({
 export type FilePresignDownloadResponse = z.infer<
   typeof FilePresignDownloadResponseSchema
 >;
+
+// ===========================================================================
+// Projects / Versions WIRE DTOs (Task #14 — design-delta §2.6/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the first Project/ProjectVersion read+mutate surface:
+// the workspace grid (`GET /v1/projects`), per-project get/rename/soft-delete
+// (`GET/PATCH/DELETE /v1/projects/:id`), and the version list
+// (`GET /v1/projects/:id/versions`). The create/import/commit/publish endpoints are
+// separate, later, DBOS-backed tasks (#18–22) — not modeled here.
+//
+// Wire types are `*Dto`-suffixed (NOT bare `Project` / `ProjectVersion`): those bare
+// names are the Prisma model TYPES re-exported via `export * from generated/prisma`,
+// so a same-named wire type would collide and be dropped from the barrel (same rule
+// as `AuthUser`, `GithubConnectionStatus`). The enum fields reuse the mirrors
+// declared at the top of this file (`RepoVisibilitySchema`, `ProjectCreatedFromSchema`,
+// `ProjectVersionStateSchema`). Date columns are ISO-8601 strings on the wire.
+// ===========================================================================
+
+/** A `Project` on the wire (design-delta §2.6). Carries every scalar the workspace
+ *  grid (10a card) and studio header need. `ownerId` is intentionally omitted (the
+ *  caller is always the owner — precedent: the connection DTOs omit `userId`) and so
+ *  is `deletedAt` (soft-deleted projects are filtered out of every response, so the
+ *  field would be a perpetually-null noise). `lastOpenedAt`/`createdAt` are ISO-8601. */
+export const ProjectDtoSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  repoVisibility: RepoVisibilitySchema,
+  createdFrom: ProjectCreatedFromSchema,
+  currentBranch: z.string(),
+  thumbnailAssetKey: z.string().nullable(),
+  lastRenderJobId: z.string().nullable(),
+  lastOpenedAt: z.string(),
+  createdAt: z.string(),
+});
+export type ProjectDto = z.infer<typeof ProjectDtoSchema>;
+
+/** A `ProjectVersion` on the wire (design-delta §2.6 — the 14b version dropdown).
+ *  `changedFiles` is the persisted JSON array of change descriptors (e.g.
+ *  `"M src/scenes/Shelter.tsx"`); `commitMessage`/`autoSummary`/`headCommitSha`/
+ *  `prNumber`/`prUrl`/`publishedAt` are null until a commit/publish populates them. */
+export const ProjectVersionDtoSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  semver: z.string(),
+  branchName: z.string(),
+  state: ProjectVersionStateSchema,
+  commitMessage: z.string().nullable(),
+  autoSummary: z.string().nullable(),
+  changedFiles: z.array(z.string()),
+  headCommitSha: z.string().nullable(),
+  prNumber: z.number().int().nullable(),
+  prUrl: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+});
+export type ProjectVersionDto = z.infer<typeof ProjectVersionDtoSchema>;
+
+/** Shared `:id` path param for the per-project routes. */
+export const ProjectIdParamSchema = z.object({
+  id: z.string().min(1),
+});
+export type ProjectIdParam = z.infer<typeof ProjectIdParamSchema>;
+
+/** `PATCH /v1/projects/:id` request. `name` is the ONLY editable field (design-delta
+ *  §2.6 "editable in studio top bar"); the slug is a stable URL identity and is never
+ *  regenerated on rename. */
+export const ProjectRenameRequestSchema = z.object({
+  name: z.string().min(1),
+});
+export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
+
+/** `GET /v1/projects` response: the owner's non-deleted projects (workspace grid),
+ *  most-recently-opened first. Wrapped in a keyed object (not a bare array) per the
+ *  established list-response convention. */
+export const ProjectListResponseSchema = z.object({
+  projects: z.array(ProjectDtoSchema),
+});
+export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
+
+/** `GET /v1/projects/:id` and `PATCH /v1/projects/:id` response. */
+export const ProjectResponseSchema = z.object({
+  project: ProjectDtoSchema,
+});
+export type ProjectResponse = z.infer<typeof ProjectResponseSchema>;
+
+/** `DELETE /v1/projects/:id` response (soft delete — the row remains, only
+ *  `deletedAt` is set). A repeat delete on an already-deleted project 404s. */
+export const ProjectDeleteResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type ProjectDeleteResponse = z.infer<typeof ProjectDeleteResponseSchema>;
+
+/** `GET /v1/projects/:id/versions` response: the project's versions ordered by real
+ *  semver descending (newest first — the 14b dropdown). */
+export const ProjectVersionListResponseSchema = z.object({
+  versions: z.array(ProjectVersionDtoSchema),
+});
+export type ProjectVersionListResponse = z.infer<
+  typeof ProjectVersionListResponseSchema
+>;
