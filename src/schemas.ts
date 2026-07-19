@@ -352,3 +352,94 @@ export const TestSeedResponseSchema = z.object({
     .min(1),
 });
 export type TestSeedResponse = z.infer<typeof TestSeedResponseSchema>;
+
+// ===========================================================================
+// GitHub connection WIRE DTOs (Task #11 — design-delta §2.3/§6a/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the GitHub App connection surface: install-url,
+// callback (verify via App JWT → store), disconnect, and live repo listing. We
+// store ONLY the installation pointer (never a repo token); repo-operation tokens
+// are minted on demand (see ./github `mintInstallationToken`). `connectedAt` is an
+// ISO-8601 string on the wire (the Prisma model carries a real Date column).
+//
+// The stored wire connection is `GithubConnectionStatus` (NOT `GithubConnection`):
+// the Prisma `GithubConnection` model TYPE is re-exported via `export * from
+// generated/prisma`, so a wire type of the same name would collide and be dropped
+// from the barrel (same reason the auth wire user is `AuthUser`, not `User`).
+// ===========================================================================
+
+/** `GET /v1/connections/github/install-url` response: the GitHub App's hosted
+ *  installation-picker URL (`{oauthBase}/apps/{slug}/installations/new`). */
+export const GithubInstallUrlResponseSchema = z.object({
+  url: z.string().min(1),
+});
+export type GithubInstallUrlResponse = z.infer<
+  typeof GithubInstallUrlResponseSchema
+>;
+
+/** `POST /v1/connections/github/callback` request: the installation id GitHub
+ *  redirected back with. Accepted as a string OR a number (GitHub emits it
+ *  numerically; our BFF forwards `{installationId}`) and normalized to a string
+ *  (the Prisma column is `String`). */
+export const GithubCallbackRequestSchema = z.object({
+  installationId: z
+    .union([z.string().min(1), z.number().int().positive()])
+    .transform((v) => String(v)),
+});
+export type GithubCallbackRequest = z.infer<typeof GithubCallbackRequestSchema>;
+
+/** A stored GitHub App connection on the wire (design-delta §2.3). No token
+ *  field exists — the installation id is the only stored credential-pointer.
+ *  Named `GithubConnectionStatus` to avoid colliding with the re-exported Prisma
+ *  `GithubConnection` model type. */
+export const GithubConnectionStatusSchema = z.object({
+  githubLogin: z.string(),
+  installationId: z.string(),
+  repositorySelection: z.string(),
+  status: z.string(),
+  connectedAt: z.string(),
+});
+export type GithubConnectionStatus = z.infer<
+  typeof GithubConnectionStatusSchema
+>;
+
+/** `POST /v1/connections/github/callback` response. */
+export const GithubConnectionResponseSchema = z.object({
+  connection: GithubConnectionStatusSchema,
+});
+export type GithubConnectionResponse = z.infer<
+  typeof GithubConnectionResponseSchema
+>;
+
+/** `DELETE /v1/connections/github` response (idempotent). */
+export const GithubDisconnectResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type GithubDisconnectResponse = z.infer<
+  typeof GithubDisconnectResponseSchema
+>;
+
+/** `GET /v1/github/repos?filter=` — a CLOSED two-value enum (not free text). */
+export const GithubRepoFilterSchema = z.enum(["empty", "all"]);
+export type GithubRepoFilter = z.infer<typeof GithubRepoFilterSchema>;
+
+/** One repo in the live listing (design-delta §8, wizards 12b/13a). `empty` is
+ *  derived by the API from GitHub's `size === 0` (a repo with no commits). */
+export const GithubRepoSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  fullName: z.string(),
+  owner: z.string(),
+  private: z.boolean(),
+  defaultBranch: z.string(),
+  empty: z.boolean(),
+});
+export type GithubRepo = z.infer<typeof GithubRepoSchema>;
+
+/** `GET /v1/github/repos` response (already filtered by `filter`/`q`). */
+export const GithubRepoListResponseSchema = z.object({
+  repositories: z.array(GithubRepoSchema),
+});
+export type GithubRepoListResponse = z.infer<
+  typeof GithubRepoListResponseSchema
+>;
