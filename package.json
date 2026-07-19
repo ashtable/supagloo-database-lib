@@ -28,7 +28,7 @@
   },
   "scripts": {
     "prisma:generate": "prisma generate",
-    "build": "prisma generate && tsc -p tsconfig.json",
+    "build": "prisma generate && tsc -p tsconfig.json && chmod +x dist/check-prisma-version.cli.js",
     "clean": "rm -rf dist src/generated",
     "pretest": "prisma generate",
     "test": "vitest run",
