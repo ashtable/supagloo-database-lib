@@ -557,3 +557,34 @@ export const ConnectionsResponseSchema = z.object({
   gloo: GlooConnectionStatusSchema.nullable(),
 });
 export type ConnectionsResponse = z.infer<typeof ConnectionsResponseSchema>;
+
+// ===========================================================================
+// Files WIRE DTOs (Task #13 — S3 presigned download, design-delta §4/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the single presigned-download route
+// `GET /v1/files/presign-download?key=`. The API presigns a short-lived GET URL
+// against S3_PUBLIC_ENDPOINT (browser-reachable) after scoping the requested key
+// to the caller. Uploads (server-side worker ops) and DELETE (cleanup workflow)
+// are intentionally NOT exposed here. There is no `File` Prisma model, so these
+// names do not collide with anything in the generated-client barrel.
+// ===========================================================================
+
+/** `GET /v1/files/presign-download` query: the S3 object key to presign. Ownership
+ *  of the key is enforced server-side (a foreign or unknown key → 404). */
+export const FilePresignDownloadQuerySchema = z.object({
+  key: z.string().min(1),
+});
+export type FilePresignDownloadQuery = z.infer<
+  typeof FilePresignDownloadQuerySchema
+>;
+
+/** `GET /v1/files/presign-download` response: a short-lived presigned GET URL and
+ *  its absolute expiry (ISO-8601). The URL is signed against the public endpoint so
+ *  a browser can fetch it directly. */
+export const FilePresignDownloadResponseSchema = z.object({
+  url: z.string(),
+  expiresAt: z.string(),
+});
+export type FilePresignDownloadResponse = z.infer<
+  typeof FilePresignDownloadResponseSchema
+>;

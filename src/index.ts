@@ -26,6 +26,17 @@ export type {
   InstallationToken,
 } from "./github";
 
+// Shared S3 object-key layout helpers (design-delta §4/§8). One source of truth for
+// the key format, shared by the writers (DBOS render/git-ops workflows) and the
+// reader (the API's presigned-download route) so the format can never drift.
+export {
+  buildAssetKey,
+  buildRenderOutputKey,
+  buildRenderThumbnailKey,
+  parseS3Key,
+} from "./s3-keys";
+export type { ParsedS3Key } from "./s3-keys";
+
 // Shared domain Zod schemas (design-delta §2.11): LLM structured-output contracts,
 // the supagloo.project.json manifest format, audio/render request shapes, and the
 // Prisma-enum mirrors. Schema consts are `*Schema`-suffixed; inferred TS types use
