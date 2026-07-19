@@ -15,6 +15,17 @@ export type { CreatePrismaClientOptions } from "./client";
 export { encryptSecret, decryptSecret, SecretCryptoError } from "./secrets";
 export type { SecretCryptoErrorCode } from "./secrets";
 
+// Shared GitHub App primitives (design-delta §2.3/§6a). App-JWT signing +
+// installation-token minting, shared so API (callback verify + repo listing) and
+// DBOS (git-ops workflows) use one implementation. Never persists a token.
+export { signAppJwt, mintInstallationToken, GithubAppError } from "./github";
+export type {
+  GithubAppErrorCode,
+  SignAppJwtOptions,
+  MintInstallationTokenOptions,
+  InstallationToken,
+} from "./github";
+
 // Shared domain Zod schemas (design-delta §2.11): LLM structured-output contracts,
 // the supagloo.project.json manifest format, audio/render request shapes, and the
 // Prisma-enum mirrors. Schema consts are `*Schema`-suffixed; inferred TS types use
