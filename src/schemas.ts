@@ -771,3 +771,52 @@ export const ScaffoldProjectPayloadSchema = z.object({
   manifest: ProjectManifestSchema,
 });
 export type ScaffoldProjectPayload = z.infer<typeof ScaffoldProjectPayloadSchema>;
+
+// ===========================================================================
+// Import-project WIRE + enqueue DTOs (Task #19 — design-delta §7 workflow 2 / §8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for `POST /v1/projects/import` (create Project + import_verify
+// ProjectJob, then DBOSClient.enqueue(importProject)) and the API<->DBOS enqueue
+// payload. Import points at an EXISTING Supagloo repo and DISCOVERS its manifest +
+// origin from the clone — so, unlike the scaffold request/payload, neither the request
+// nor the payload carries a `manifest` or a `createdFrom` (`createdFrom` is always
+// `import`; the manifest lives in the repo). Polling reuses the Task #18
+// `ProjectJobDto`/`ProjectJobParams` (kind-agnostic) — no new poll DTO here.
+// ===========================================================================
+
+/** `POST /v1/projects/import` request (wireframe 12b repo picker): the existing repo to
+ *  import + its visibility. `name` is optional and defaults to the repo name
+ *  server-side. No `createdFrom` (always import) and no `manifest` (read from the repo). */
+export const ImportProjectRequestSchema = z.object({
+  name: z.string().min(1).optional(),
+  repoOwner: z.string().min(1),
+  repoName: z.string().min(1),
+  visibility: RepoVisibilitySchema,
+});
+export type ImportProjectRequest = z.infer<typeof ImportProjectRequestSchema>;
+
+/** `POST /v1/projects/import` response: the new project id + the import job id (=
+ *  the DBOS workflow id the client polls via the shared `GET .../jobs/:jobId`). */
+export const ImportProjectResponseSchema = z.object({
+  projectId: z.string(),
+  jobId: z.string(),
+});
+export type ImportProjectResponse = z.infer<typeof ImportProjectResponseSchema>;
+
+/** The `importProject` workflow argument (the API<->DBOS enqueue contract). Mirrors
+ *  `ScaffoldProjectPayloadSchema` MINUS `manifest` + `createdFrom`: the workflow clones
+ *  the existing repo and discovers those from it. `.strip()` (Zod default) drops any
+ *  stray `manifest`/`createdFrom` a caller bolts on, so the payload can never smuggle a
+ *  composition. The worker validates against this on entry; the API constructs it. */
+export const ImportProjectPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+  ownerId: z.string().min(1),
+  installationId: z.string().min(1),
+  repoOwner: z.string().min(1),
+  repoName: z.string().min(1),
+  repoVisibility: RepoVisibilitySchema,
+  slug: z.string().min(1),
+  name: z.string().min(1),
+});
+export type ImportProjectPayload = z.infer<typeof ImportProjectPayloadSchema>;
