@@ -822,6 +822,56 @@ export const ImportProjectPayloadSchema = z.object({
 export type ImportProjectPayload = z.infer<typeof ImportProjectPayloadSchema>;
 
 // ===========================================================================
+// Commit-version WIRE + enqueue DTOs (Task #21 — design-delta §7 workflow 3 / §8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for `POST /v1/projects/:id/commit` (create a `commit`
+// ProjectJob, then DBOSClient.enqueue(commitVersion)) and the API<->DBOS enqueue payload.
+// The request carries the EDITED manifest + a commit message; the manifest is validated
+// against `ProjectManifestSchema` (whose `TranslationSchema` is KJV/BSB-only, so a
+// non-KJV/BSB manifest is rejected at the boundary). The payload additionally carries the
+// working `branchName` + the working version's `semver` (so the workflow can clone the
+// right branch and key `updateVersionRecord`'s upsert without an extra DB round-trip) plus
+// the installation/repo coordinates. Task 21 UPDATES the existing working ProjectVersion
+// in place (same semver, same branch) — it does NOT create a version or bump semver.
+// Polling reuses the Task #18 `ProjectJobDto`/`ProjectJobParams` (kind-agnostic).
+// ===========================================================================
+
+/** `POST /v1/projects/:id/commit` request (design-delta §8: `{ manifest, message }`). The
+ *  manifest is the edited composition to persist; `message` is the real user-supplied
+ *  commit message (non-empty). The manifest is validated against `ProjectManifestSchema`. */
+export const CommitVersionRequestSchema = z.object({
+  manifest: ProjectManifestSchema,
+  message: z.string().min(1),
+});
+export type CommitVersionRequest = z.infer<typeof CommitVersionRequestSchema>;
+
+/** `POST /v1/projects/:id/commit` response: the new commit job id (= the DBOS workflow id
+ *  the client polls via the shared `GET .../jobs/:jobId`). The project is already known
+ *  (it is the `:id` in the URL), so only the job id is returned. */
+export const CommitVersionResponseSchema = z.object({
+  jobId: z.string(),
+});
+export type CommitVersionResponse = z.infer<typeof CommitVersionResponseSchema>;
+
+/** The `commitVersion` workflow argument (the API<->DBOS enqueue contract). Everything the
+ *  workflow needs before step 1 rides this payload: the installation/repo coordinates, the
+ *  working `branchName` to clone+commit+push, the working version's `semver` (keys
+ *  `updateVersionRecord`'s upsert), and the edited `manifest` + `message`. The worker
+ *  validates against this on entry; the API constructs + enqueues it. */
+export const CommitVersionPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+  installationId: z.string().min(1),
+  repoOwner: z.string().min(1),
+  repoName: z.string().min(1),
+  branchName: z.string().min(1),
+  semver: z.string().min(1),
+  manifest: ProjectManifestSchema,
+  message: z.string().min(1),
+});
+export type CommitVersionPayload = z.infer<typeof CommitVersionPayloadSchema>;
+
+// ===========================================================================
 // Manifest read WIRE DTOs (Task #20 — design-delta §5.3/§6b/§8)
 // ---------------------------------------------------------------------------
 // The API<->BFF contract for `GET /v1/projects/:id/manifest?ref=`. The API reads

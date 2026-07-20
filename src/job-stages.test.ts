@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as DbLib from "./index";
 import {
+  COMMIT_STAGES,
   IMPORT_STAGES,
   SCAFFOLD_STAGES,
   STAGE_STATES,
@@ -56,6 +57,29 @@ describe("Task #19 job-stages — IMPORT_STAGES catalogue", () => {
   });
 });
 
+describe("Task #21 job-stages — COMMIT_STAGES catalogue", () => {
+  it("lists the five commit steps row-for-row, in order, each with a label", () => {
+    expect(COMMIT_STAGES.map((s) => s.key)).toEqual([
+      "mintInstallationToken",
+      "cloneBranchShallow",
+      "applyManifest",
+      "commitAndPush",
+      "updateVersionRecord",
+    ]);
+    for (const stage of COMMIT_STAGES) {
+      expect(stage.label.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("seeds every commit stage pending and round-trips the schema", () => {
+    const stages = buildInitialStages(COMMIT_STAGES);
+    expect(stages).toHaveLength(COMMIT_STAGES.length);
+    expect(stages.every((s) => s.state === "pending")).toBe(true);
+    expect(stages.map((s) => s.key)).toEqual(COMMIT_STAGES.map((s) => s.key));
+    expect(() => JobStagesSchema.parse(stages)).not.toThrow();
+  });
+});
+
 describe("Task #18 job-stages — buildInitialStages + schema", () => {
   it("seeds every catalogue entry pending and round-trips the schema", () => {
     const stages = buildInitialStages(SCAFFOLD_STAGES);
@@ -85,10 +109,11 @@ describe("Task #18 job-stages — buildInitialStages + schema", () => {
   });
 });
 
-describe("Task #18/19 job-stages — barrel exports", () => {
+describe("Task #18/19/21 job-stages — barrel exports", () => {
   it("re-exports the stage contract from the package entry", () => {
     expect(Array.isArray(DbLib.SCAFFOLD_STAGES)).toBe(true);
     expect(Array.isArray(DbLib.IMPORT_STAGES)).toBe(true);
+    expect(Array.isArray(DbLib.COMMIT_STAGES)).toBe(true);
     expect(typeof DbLib.buildInitialStages).toBe("function");
     expect(typeof DbLib.JobStageSchema?.safeParse).toBe("function");
   });

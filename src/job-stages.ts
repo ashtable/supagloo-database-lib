@@ -80,3 +80,18 @@ export const IMPORT_STAGES: readonly StageCatalogueEntry[] = [
   { key: "parseManifest", label: "Validating project manifest" },
   { key: "finalizeRecords", label: "Finalizing project records" },
 ] as const;
+
+/**
+ * The five commit-version steps, row-for-row (design-delta §7 workflow 3). Each `key` is
+ * EXACTLY the corresponding `commitVersionWorkflow` `DBOS.runStep` name, so the stage log
+ * and the step checkpoints line up one-to-one. Mint IS a stage (mirroring the other
+ * git-ops catalogues); commit clones the WORKING branch, regenerates the manifest-derived
+ * sources, commits + pushes, and updates the working ProjectVersion in place.
+ */
+export const COMMIT_STAGES: readonly StageCatalogueEntry[] = [
+  { key: "mintInstallationToken", label: "Authenticating with GitHub" },
+  { key: "cloneBranchShallow", label: "Cloning working branch" },
+  { key: "applyManifest", label: "Regenerating scene sources" },
+  { key: "commitAndPush", label: "Committing & pushing changes" },
+  { key: "updateVersionRecord", label: "Updating version record" },
+] as const;
