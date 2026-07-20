@@ -63,3 +63,20 @@ export const SCAFFOLD_STAGES: readonly StageCatalogueEntry[] = [
   { key: "cutWorkingBranch", label: "Cutting working branch (v0.0.1)" },
   { key: "finalizeRecords", label: "Finalizing project records" },
 ] as const;
+
+/**
+ * The six import-verify steps, row-for-row (design-delta §7 workflow 2). Each `key` is
+ * EXACTLY the corresponding `importProjectWorkflow` `DBOS.runStep` name, so the stage
+ * log and the step checkpoints line up one-to-one. Mint IS a stage (mirroring
+ * `SCAFFOLD_STAGES`); import has no repo-creation / scaffold-write / PR steps — it
+ * clones, verifies, resolves the latest version branch, validates the manifest, and
+ * finalizes.
+ */
+export const IMPORT_STAGES: readonly StageCatalogueEntry[] = [
+  { key: "mintInstallationToken", label: "Authenticating with GitHub" },
+  { key: "cloneRepo", label: "Cloning repository" },
+  { key: "verifySupaglooProject", label: "Verifying Supagloo project" },
+  { key: "resolveLatestVersionBranch", label: "Resolving latest version" },
+  { key: "parseManifest", label: "Validating project manifest" },
+  { key: "finalizeRecords", label: "Finalizing project records" },
+] as const;
