@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { JobStageSchema } from "./job-stages";
 
 /**
  * Shared domain Zod schemas (design-delta §2.11).
@@ -690,3 +691,83 @@ export const ProjectVersionListResponseSchema = z.object({
 export type ProjectVersionListResponse = z.infer<
   typeof ProjectVersionListResponseSchema
 >;
+
+// ===========================================================================
+// Project job creation + polling WIRE DTOs (Task #18 — design-delta §5.1/§6b/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for `POST /v1/projects` (create Project + scaffold
+// ProjectJob, then DBOSClient.enqueue) and `GET /v1/projects/:id/jobs/:jobId` (stage
+// polling). Plus `ScaffoldProjectPayloadSchema` — the EXACT argument the API's enqueue
+// call passes to the scaffoldProject workflow (the API<->DBOS contract, shared so the
+// worker and the enqueuer can never drift on the payload shape). Date columns are
+// ISO-8601 strings on the wire; `stages` reuses the shared JobStage contract
+// (./job-stages), the same shape the DBOS workflow updates.
+// ===========================================================================
+
+/** `POST /v1/projects` request (design-delta §6b: `{ name, repo, visibility,
+ *  createdFrom }`). `repo` is decomposed to `repoOwner` + `repoName` (the repo already
+ *  exists — created by the pre-endpoint create-new-repo hop, task 26). `name` is
+ *  optional and defaults to the repo name server-side (wireframe 12a/13a). */
+export const CreateProjectRequestSchema = z.object({
+  name: z.string().min(1).optional(),
+  repoOwner: z.string().min(1),
+  repoName: z.string().min(1),
+  visibility: RepoVisibilitySchema,
+  createdFrom: ProjectCreatedFromSchema,
+});
+export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
+
+/** `POST /v1/projects` response: the new project id + the scaffold job id (=
+ *  the DBOS workflow id the client polls). */
+export const CreateProjectResponseSchema = z.object({
+  projectId: z.string(),
+  jobId: z.string(),
+});
+export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+
+/** A `ProjectJob` on the wire (design-delta §2.9) — the scaffold-progress poll shape.
+ *  `stages` is the shared `{key,label,state}[]` progress log; `error`/`completedAt` are
+ *  null until the job terminates. `createdAt`/`completedAt` are ISO-8601. */
+export const ProjectJobDtoSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  kind: ProjectJobKindSchema,
+  status: JobStatusSchema,
+  stages: z.array(JobStageSchema),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+export type ProjectJobDto = z.infer<typeof ProjectJobDtoSchema>;
+
+/** `GET /v1/projects/:id/jobs/:jobId` response. */
+export const ProjectJobResponseSchema = z.object({
+  job: ProjectJobDtoSchema,
+});
+export type ProjectJobResponse = z.infer<typeof ProjectJobResponseSchema>;
+
+/** `:id` + `:jobId` path params for the job-polling route. */
+export const ProjectJobParamsSchema = z.object({
+  id: z.string().min(1),
+  jobId: z.string().min(1),
+});
+export type ProjectJobParams = z.infer<typeof ProjectJobParamsSchema>;
+
+/** The `scaffoldProject` workflow argument (the API<->DBOS enqueue contract). The
+ *  repo already EXISTS; everything the workflow needs rides this payload (the
+ *  per-user `installationId` and the generated `manifest` are not in the DB). The
+ *  worker validates against this on entry; the API constructs + enqueues it. */
+export const ScaffoldProjectPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+  ownerId: z.string().min(1),
+  installationId: z.string().min(1),
+  repoOwner: z.string().min(1),
+  repoName: z.string().min(1),
+  repoVisibility: RepoVisibilitySchema,
+  createdFrom: ProjectCreatedFromSchema,
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  manifest: ProjectManifestSchema,
+});
+export type ScaffoldProjectPayload = z.infer<typeof ScaffoldProjectPayloadSchema>;
