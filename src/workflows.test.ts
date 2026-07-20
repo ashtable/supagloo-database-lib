@@ -5,6 +5,7 @@ import {
   GIT_OPS_QUEUE_NAME,
   GIT_OPS_WORKFLOW_BY_KIND,
   IMPORT_PROJECT_WORKFLOW_NAME,
+  PUBLISH_VERSION_WORKFLOW_NAME,
   SCAFFOLD_PROJECT_WORKFLOW_NAME,
 } from "./workflows";
 
@@ -33,6 +34,12 @@ describe("Task #21 workflows — commit workflow name", () => {
   });
 });
 
+describe("Task #22 workflows — publish workflow name", () => {
+  it("pins the publish workflow name", () => {
+    expect(PUBLISH_VERSION_WORKFLOW_NAME).toBe("publishVersion");
+  });
+});
+
 describe("Task #18/19 workflows — GIT_OPS_WORKFLOW_BY_KIND", () => {
   it("maps scaffold to the scaffold workflow on the git-ops queue", () => {
     expect(GIT_OPS_WORKFLOW_BY_KIND.scaffold).toEqual({
@@ -55,20 +62,29 @@ describe("Task #18/19 workflows — GIT_OPS_WORKFLOW_BY_KIND", () => {
     });
   });
 
-  it("covers exactly the workflow kinds wired so far (scaffold + import_verify + commit)", () => {
+  it("maps publish to the publish workflow on the git-ops queue (Task #22)", () => {
+    expect(GIT_OPS_WORKFLOW_BY_KIND.publish).toEqual({
+      workflowName: PUBLISH_VERSION_WORKFLOW_NAME,
+      queueName: GIT_OPS_QUEUE_NAME,
+    });
+  });
+
+  it("covers exactly the four git-ops kinds now wired (scaffold + import_verify + commit + publish)", () => {
     expect(Object.keys(GIT_OPS_WORKFLOW_BY_KIND)).toEqual([
       "scaffold",
       "import_verify",
       "commit",
+      "publish",
     ]);
   });
 });
 
-describe("Task #18/19 workflows — barrel exports", () => {
+describe("Task #18/19/21/22 workflows — barrel exports", () => {
   it("re-exports the routing constants from the package entry", () => {
     expect(DbLib.SCAFFOLD_PROJECT_WORKFLOW_NAME).toBe("scaffoldProject");
     expect(DbLib.IMPORT_PROJECT_WORKFLOW_NAME).toBe("importProject");
     expect(DbLib.COMMIT_VERSION_WORKFLOW_NAME).toBe("commitVersion");
+    expect(DbLib.PUBLISH_VERSION_WORKFLOW_NAME).toBe("publishVersion");
     expect(DbLib.GIT_OPS_QUEUE_NAME).toBe("git-ops");
     expect(DbLib.GIT_OPS_WORKFLOW_BY_KIND.scaffold.workflowName).toBe(
       "scaffoldProject",
@@ -78,6 +94,9 @@ describe("Task #18/19 workflows — barrel exports", () => {
     );
     expect(DbLib.GIT_OPS_WORKFLOW_BY_KIND.commit?.workflowName).toBe(
       "commitVersion",
+    );
+    expect(DbLib.GIT_OPS_WORKFLOW_BY_KIND.publish?.workflowName).toBe(
+      "publishVersion",
     );
   });
 });

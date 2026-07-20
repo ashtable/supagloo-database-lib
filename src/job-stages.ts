@@ -95,3 +95,21 @@ export const COMMIT_STAGES: readonly StageCatalogueEntry[] = [
   { key: "commitAndPush", label: "Committing & pushing changes" },
   { key: "updateVersionRecord", label: "Updating version record" },
 ] as const;
+
+/**
+ * The seven publish-version steps, row-for-row (design-delta §7 workflow 4). Each `key` is
+ * EXACTLY the corresponding `publishVersionWorkflow` `DBOS.runStep` name, so the stage log
+ * and the step checkpoints line up one-to-one. Mint IS a stage (mirroring the other git-ops
+ * catalogues). Labels are in the shared present-participle style — NOT the 14a wireframe
+ * mockup's per-version strings ("Merging PR & tagging v0.0.2…"), which were illustrative UI
+ * copy for one example, not the static label values.
+ */
+export const PUBLISH_STAGES: readonly StageCatalogueEntry[] = [
+  { key: "mintInstallationToken", label: "Authenticating with GitHub" },
+  { key: "commitPendingChanges", label: "Committing pending changes" },
+  { key: "pushBranch", label: "Pushing branch to origin" },
+  { key: "openPullRequest", label: "Opening pull request" },
+  { key: "mergePullRequestAndTag", label: "Merging & tagging release" },
+  { key: "cutNextVersionBranch", label: "Cutting next version branch" },
+  { key: "finalizeRecords", label: "Finalizing project records" },
+] as const;

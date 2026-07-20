@@ -872,6 +872,54 @@ export const CommitVersionPayloadSchema = z.object({
 export type CommitVersionPayload = z.infer<typeof CommitVersionPayloadSchema>;
 
 // ===========================================================================
+// Publish-version WIRE + enqueue DTOs (Task #22 — design-delta §7 workflow 4 / §8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for `POST /v1/projects/:id/publish` (create a `publish`
+// ProjectJob, then DBOSClient.enqueue(publishVersion)) and the API<->DBOS enqueue payload.
+// Unlike commit, publish carries NO manifest — the request is `{ message }` only. The
+// working manifest was already persisted onto the working branch via prior
+// commitVersionWorkflow calls; publish merges that branch to `main`, tags the release, and
+// cuts the next working branch. The payload carries the working `branchName` (the PR head)
+// and the working version's `semver` (the version being published — it names the release
+// tag `v<semver>` and keys `finalizeRecords`' published-version upsert) plus the
+// installation/repo coordinates. The next version is derived IN the workflow via
+// `nextPatchVersion` (bump-patch of the highest existing semver), not passed in.
+// Polling reuses the Task #18 `ProjectJobDto`/`ProjectJobParams` (kind-agnostic).
+// ===========================================================================
+
+/** `POST /v1/projects/:id/publish` request (design-delta §8: `{ message }` — string only,
+ *  no manifest, unlike commit). The publish/release message (non-empty). */
+export const PublishVersionRequestSchema = z.object({
+  message: z.string().min(1),
+});
+export type PublishVersionRequest = z.infer<typeof PublishVersionRequestSchema>;
+
+/** `POST /v1/projects/:id/publish` response: the new publish job id (= the DBOS workflow id
+ *  the client polls via the shared `GET .../jobs/:jobId`). */
+export const PublishVersionResponseSchema = z.object({
+  jobId: z.string(),
+});
+export type PublishVersionResponse = z.infer<typeof PublishVersionResponseSchema>;
+
+/** The `publishVersion` workflow argument (the API<->DBOS enqueue contract). Everything the
+ *  workflow needs before step 1 rides this payload: the installation/repo coordinates, the
+ *  working `branchName` to publish (the PR head), the working version's `semver` (the version
+ *  being published — names the tag + keys the published upsert), and the `message`. Mirrors
+ *  `CommitVersionPayloadSchema` MINUS `manifest`. The worker validates against this on
+ *  entry; the API constructs + enqueues it. */
+export const PublishVersionPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+  installationId: z.string().min(1),
+  repoOwner: z.string().min(1),
+  repoName: z.string().min(1),
+  branchName: z.string().min(1),
+  semver: z.string().min(1),
+  message: z.string().min(1),
+});
+export type PublishVersionPayload = z.infer<typeof PublishVersionPayloadSchema>;
+
+// ===========================================================================
 // Manifest read WIRE DTOs (Task #20 — design-delta §5.3/§6b/§8)
 // ---------------------------------------------------------------------------
 // The API<->BFF contract for `GET /v1/projects/:id/manifest?ref=`. The API reads

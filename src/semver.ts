@@ -56,3 +56,25 @@ export function compareSemver(a: string, b: string): number {
   if (pa.patch !== pb.patch) return pa.patch < pb.patch ? -1 : 1;
   return 0;
 }
+
+/**
+ * The next working version's semver for the publish workflow (design-delta §7 workflow 4):
+ * the PATCH bump of the HIGHEST existing version. Derived numerically via
+ * {@link compareSemver} (so `0.10.0 > 0.2.0` and `0.2.3 → 0.2.4`), NOT a hardcoded
+ * `0.0.(n+1)` — imported projects carry free-form semver that a naive counter would break.
+ *
+ * Unparseable entries are ignored (they sort below any real version). Throws when the set
+ * has no parseable version at all — every project carries at least `0.0.0`, so an empty /
+ * all-unparseable set is an invariant violation, not a case to paper over with a default.
+ */
+export function nextPatchVersion(existing: readonly string[]): string {
+  const parseable = existing.filter((v) => parseSemver(v) !== null);
+  if (parseable.length === 0) {
+    throw new Error(
+      "nextPatchVersion: no parseable semver in the existing version set",
+    );
+  }
+  const highest = parseable.reduce((a, b) => (compareSemver(a, b) >= 0 ? a : b));
+  const p = parseSemver(highest)!;
+  return `${p.major}.${p.minor}.${p.patch + 1}`;
+}

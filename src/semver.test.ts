@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSemver, compareSemver } from "./semver";
+import { parseSemver, compareSemver, nextPatchVersion } from "./semver";
 
 // Unit tests for the Task #14 semver ordering helpers (design-delta §2.6). Pure,
 // DB-free. `ProjectVersion.semver` is free-form and NOT zero-padded, so ordering
@@ -53,5 +53,34 @@ describe("compareSemver", () => {
   it("is usable as an ascending Array.sort comparator", () => {
     const sorted = ["0.2.0", "0.10.0", "0.0.1"].sort(compareSemver);
     expect(sorted).toEqual(["0.0.1", "0.2.0", "0.10.0"]);
+  });
+});
+
+// Task #22: the publish workflow's next-version bump. The next working branch is the
+// PATCH bump of the HIGHEST existing version — derived numerically (0.10.0 > 0.2.0), NOT
+// a hardcoded v0.0.(n+1), because imported projects carry free-form semver (design-delta
+// §7 workflow 4).
+describe("nextPatchVersion", () => {
+  it("bumps the patch of the highest existing version (the fresh-project 0.0.1 → 0.0.2 case)", () => {
+    expect(nextPatchVersion(["0.0.0", "0.0.1"])).toBe("0.0.2");
+  });
+
+  it("bumps the highest for an imported project's free-form semver (0.2.3 → 0.2.4)", () => {
+    // Order-independent: the highest of the set is bumped, whatever order it arrives in.
+    expect(nextPatchVersion(["0.2.1", "0.2.3", "0.2.2"])).toBe("0.2.4");
+  });
+
+  it("picks the highest NUMERICALLY, not lexically (0.10.0 > 0.9.0)", () => {
+    expect(nextPatchVersion(["0.9.0", "0.10.0"])).toBe("0.10.1");
+    expect(nextPatchVersion(["0.0.9", "0.0.10"])).toBe("0.0.11");
+  });
+
+  it("ignores unparseable entries when a parseable one exists", () => {
+    expect(nextPatchVersion(["not-semver", "0.1.4", "also-bad"])).toBe("0.1.5");
+  });
+
+  it("throws when the set is empty or has no parseable version (invariant violation)", () => {
+    expect(() => nextPatchVersion([])).toThrow();
+    expect(() => nextPatchVersion(["nope", "bad"])).toThrow();
   });
 });

@@ -3,6 +3,7 @@ import * as DbLib from "./index";
 import {
   COMMIT_STAGES,
   IMPORT_STAGES,
+  PUBLISH_STAGES,
   SCAFFOLD_STAGES,
   STAGE_STATES,
   buildInitialStages,
@@ -80,6 +81,31 @@ describe("Task #21 job-stages — COMMIT_STAGES catalogue", () => {
   });
 });
 
+describe("Task #22 job-stages — PUBLISH_STAGES catalogue", () => {
+  it("lists the seven publish steps row-for-row, in order, each with a label", () => {
+    expect(PUBLISH_STAGES.map((s) => s.key)).toEqual([
+      "mintInstallationToken",
+      "commitPendingChanges",
+      "pushBranch",
+      "openPullRequest",
+      "mergePullRequestAndTag",
+      "cutNextVersionBranch",
+      "finalizeRecords",
+    ]);
+    for (const stage of PUBLISH_STAGES) {
+      expect(stage.label.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("seeds every publish stage pending and round-trips the schema", () => {
+    const stages = buildInitialStages(PUBLISH_STAGES);
+    expect(stages).toHaveLength(PUBLISH_STAGES.length);
+    expect(stages.every((s) => s.state === "pending")).toBe(true);
+    expect(stages.map((s) => s.key)).toEqual(PUBLISH_STAGES.map((s) => s.key));
+    expect(() => JobStagesSchema.parse(stages)).not.toThrow();
+  });
+});
+
 describe("Task #18 job-stages — buildInitialStages + schema", () => {
   it("seeds every catalogue entry pending and round-trips the schema", () => {
     const stages = buildInitialStages(SCAFFOLD_STAGES);
@@ -109,11 +135,12 @@ describe("Task #18 job-stages — buildInitialStages + schema", () => {
   });
 });
 
-describe("Task #18/19/21 job-stages — barrel exports", () => {
+describe("Task #18/19/21/22 job-stages — barrel exports", () => {
   it("re-exports the stage contract from the package entry", () => {
     expect(Array.isArray(DbLib.SCAFFOLD_STAGES)).toBe(true);
     expect(Array.isArray(DbLib.IMPORT_STAGES)).toBe(true);
     expect(Array.isArray(DbLib.COMMIT_STAGES)).toBe(true);
+    expect(Array.isArray(DbLib.PUBLISH_STAGES)).toBe(true);
     expect(typeof DbLib.buildInitialStages).toBe("function");
     expect(typeof DbLib.JobStageSchema?.safeParse).toBe("function");
   });
