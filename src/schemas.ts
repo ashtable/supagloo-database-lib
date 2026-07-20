@@ -820,3 +820,30 @@ export const ImportProjectPayloadSchema = z.object({
   name: z.string().min(1),
 });
 export type ImportProjectPayload = z.infer<typeof ImportProjectPayloadSchema>;
+
+// ===========================================================================
+// Manifest read WIRE DTOs (Task #20 — design-delta §5.3/§6b/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for `GET /v1/projects/:id/manifest?ref=`. The API reads
+// `supagloo.project.json` from the project's GitHub repo at `ref` via the GitHub
+// Contents API (a synchronous in-process read — NOT a DBOS workflow), validates it
+// against the task-7 `ProjectManifestSchema`, and returns the Zod-parsed manifest so
+// the studio reducer (#27) can hydrate from it. There is no `Manifest` Prisma model,
+// so these names do not collide with anything in the generated-client barrel.
+// ===========================================================================
+
+/** `GET /v1/projects/:id/manifest` query: the git ref (version branch or SHA) to
+ *  read the manifest at. OPTIONAL — when omitted the API defaults it to the project's
+ *  `currentBranch`. A non-empty string when present. */
+export const ManifestRefQuerySchema = z.object({
+  ref: z.string().min(1).optional(),
+});
+export type ManifestRefQuery = z.infer<typeof ManifestRefQuerySchema>;
+
+/** `GET /v1/projects/:id/manifest` response: the Zod-parsed `supagloo.project.json`
+ *  composition (design-delta §2.11 — the manifest is the sole source of truth for the
+ *  composition; it is read from the repo, never a DB table). */
+export const ManifestResponseSchema = z.object({
+  manifest: ProjectManifestSchema,
+});
+export type ManifestResponse = z.infer<typeof ManifestResponseSchema>;
