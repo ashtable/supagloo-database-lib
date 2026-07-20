@@ -41,7 +41,7 @@ export type { ParsedS3Key } from "./s3-keys";
 // non-zero-padded `ProjectVersion.semver` must be ordered numerically (0.10.0 is
 // newer than 0.2.0). Shared so the API version listing (#14) and the DBOS
 // next-semver bump (#22) order/compute versions the same way.
-export { parseSemver, compareSemver } from "./semver";
+export { parseSemver, compareSemver, nextPatchVersion } from "./semver";
 export type { ParsedSemver } from "./semver";
 
 // Shared domain Zod schemas (design-delta §2.11): LLM structured-output contracts,
