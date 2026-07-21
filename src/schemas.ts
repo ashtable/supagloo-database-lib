@@ -822,6 +822,49 @@ export const ImportProjectPayloadSchema = z.object({
 export type ImportProjectPayload = z.infer<typeof ImportProjectPayloadSchema>;
 
 // ===========================================================================
+// Create-new-repo JIT hop WIRE DTOs (Task #26 — design-delta §2.3/§6b/§8)
+// ---------------------------------------------------------------------------
+// The zero-storage GitHub USER-token hop that runs BEFORE `POST /v1/projects` for
+// the create-new-repo origin: installation tokens can't create a repo in a user
+// account, so the user authorizes once, the server exchanges the `code` for a
+// short-lived user token, `POST /user/repos` creates the repo (+ adds it to a
+// `selected`-mode installation), the token is discarded, and the endpoint then
+// delegates to the existing create-project+scaffold path — returning the same
+// `{ projectId, jobId }` as `POST /v1/projects` (CreateProjectResponseSchema).
+// ===========================================================================
+
+/** `GET /v1/projects/repo-authorize-url` query: the BFF's own callback URL the
+ *  GitHub user-authorization page redirects back to, plus an opaque CSRF `state`
+ *  nonce the browser round-trips. */
+export const RepoAuthorizeUrlQuerySchema = z.object({
+  redirectUri: z.string().min(1),
+  state: z.string().min(1),
+});
+export type RepoAuthorizeUrlQuery = z.infer<typeof RepoAuthorizeUrlQuerySchema>;
+
+/** `GET /v1/projects/repo-authorize-url` response: the hosted GitHub
+ *  user-authorization URL the wizard opens (client_id + redirect_uri + scope +
+ *  state). No user secret crosses this wire. */
+export const RepoAuthorizeUrlResponseSchema = z.object({
+  url: z.string().min(1),
+});
+export type RepoAuthorizeUrlResponse = z.infer<typeof RepoAuthorizeUrlResponseSchema>;
+
+/** `POST /v1/projects/create-repo` request: the user-authorization `code` plus the
+ *  new repo's `repoName` + `visibility` and the project `createdFrom` origin (v1 =
+ *  `blank`). `name` is optional (defaults to the repo name server-side). The repo
+ *  OWNER is determined by GitHub from the user token — not supplied by the client.
+ *  The response reuses `CreateProjectResponseSchema` (`{ projectId, jobId }`). */
+export const CreateRepoRequestSchema = z.object({
+  code: z.string().min(1),
+  name: z.string().min(1).optional(),
+  repoName: z.string().min(1),
+  visibility: RepoVisibilitySchema,
+  createdFrom: ProjectCreatedFromSchema,
+});
+export type CreateRepoRequest = z.infer<typeof CreateRepoRequestSchema>;
+
+// ===========================================================================
 // Commit-version WIRE + enqueue DTOs (Task #21 — design-delta §7 workflow 3 / §8)
 // ---------------------------------------------------------------------------
 // The API<->BFF contract for `POST /v1/projects/:id/commit` (create a `commit`
