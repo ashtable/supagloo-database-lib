@@ -4,6 +4,7 @@ import {
   AI_GENERATION_QUEUE_NAME,
   AI_GENERATION_WORKFLOW_BY_KIND,
   COMMIT_VERSION_WORKFLOW_NAME,
+  GENERATE_AUDIO_WORKFLOW_NAME,
   GENERATE_IMAGE_WORKFLOW_NAME,
   GENERATE_SCRIPT_WORKFLOW_NAME,
   GIT_OPS_QUEUE_NAME,
@@ -100,12 +101,35 @@ describe("Task #30 workflows — generateScript name + ai-generation queue", () 
     });
   });
 
-  it("covers the two text kinds + image now wired (narration/music/video land in #33–34)", () => {
+  it("covers the text kinds + image + audio now wired (only video lands in #34)", () => {
     expect(Object.keys(AI_GENERATION_WORKFLOW_BY_KIND).sort()).toEqual([
       "image",
+      "music",
+      "narration",
       "script",
       "storyboard",
     ]);
+  });
+});
+
+describe("Task #33 workflows — generateAudio name + narration/music routing", () => {
+  it("pins the generate-audio workflow name", () => {
+    expect(GENERATE_AUDIO_WORKFLOW_NAME).toBe("generateAudio");
+  });
+
+  it("routes BOTH audio kinds (narration + music) to generateAudio on the ai-generation queue", () => {
+    expect(AI_GENERATION_WORKFLOW_BY_KIND.narration).toEqual({
+      workflowName: GENERATE_AUDIO_WORKFLOW_NAME,
+      queueName: AI_GENERATION_QUEUE_NAME,
+    });
+    expect(AI_GENERATION_WORKFLOW_BY_KIND.music).toEqual({
+      workflowName: GENERATE_AUDIO_WORKFLOW_NAME,
+      queueName: AI_GENERATION_QUEUE_NAME,
+    });
+  });
+
+  it("re-exports the generate-audio name from the barrel", () => {
+    expect(DbLib.GENERATE_AUDIO_WORKFLOW_NAME).toBe("generateAudio");
   });
 });
 

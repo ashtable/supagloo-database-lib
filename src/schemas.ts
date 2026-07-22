@@ -317,6 +317,33 @@ export const MusicSpecSchema = z.object({
 export type MusicSpec = z.infer<typeof MusicSpecSchema>;
 
 // ---------------------------------------------------------------------------
+// Task #33: the `AiGeneration.input` contracts for the two audio kinds
+// (design-delta §7 workflow 7). Named `Generate<Kind>InputSchema` for parity with
+// `GenerateScriptInputSchema`/`GenerateImageInputSchema` (each kind's create-union
+// input); `.passthrough()` (same forward-compat discipline as image/script) lets a
+// future richer contract add fields (format/speed/tempo) without breaking the
+// generateAudio workflow, which validates the row's `input` with these SAME schemas.
+// They reuse the task-7 `NarrationSpecSchema`/`MusicSpecSchema` rather than duplicating.
+// ---------------------------------------------------------------------------
+
+/** The `AiGeneration.input` for the `narration` kind: the WHOLE-PROJECT narration spec —
+ *  one voice descriptor + the per-scene scripts (the generateAudio workflow concatenates
+ *  them into one synthesized track — design §7 workflow 7, decision D5). */
+export const GenerateNarrationInputSchema = NarrationSpecSchema.passthrough();
+export type GenerateNarrationInput = z.infer<typeof GenerateNarrationInputSchema>;
+
+/** The `AiGeneration.input` for the `music` kind: a style label + target duration. */
+export const GenerateMusicInputSchema = MusicSpecSchema.passthrough();
+export type GenerateMusicInput = z.infer<typeof GenerateMusicInputSchema>;
+
+/** The DBOS enqueue payload for `generateAudio` (narration + music). Same `{generationId}`
+ *  echo as generateScript/generateImage — everything else is read off the row. */
+export const GenerateAudioPayloadSchema = z.object({
+  generationId: z.string().min(1),
+});
+export type GenerateAudioPayload = z.infer<typeof GenerateAudioPayloadSchema>;
+
+// ---------------------------------------------------------------------------
 // RenderOutputSpecSchema — resolution / aspect / fps / codec
 // ---------------------------------------------------------------------------
 
@@ -1088,10 +1115,10 @@ export type ManifestResponse = z.infer<typeof ManifestResponseSchema>;
 // input contracts (the POST 501s those kinds before their `input` is ever consumed).
 // ===========================================================================
 
-/** Placeholder input for the still-not-built media kinds (narration/music/video). Accepts
- *  any object; the real per-kind contracts land with their workflows (#33–34). Today the
- *  POST rejects these kinds with 501 before this input is consumed. (Task #32 gave `image`
- *  its real `GenerateImageInputSchema` — it is no longer a placeholder kind.) */
+/** Placeholder input for the still-not-built `video` kind. Accepts any object; the real
+ *  `video` contract lands with its workflow (#34). Today the POST rejects `video` with 501
+ *  before this input is consumed. (Tasks #32/#33 gave `image`/`narration`/`music` their real
+ *  input schemas — they are no longer placeholder kinds.) */
 export const MediaGenerationInputSchema = z.object({}).passthrough();
 export type MediaGenerationInput = z.infer<typeof MediaGenerationInputSchema>;
 
@@ -1129,12 +1156,14 @@ export const CreateAiGenerationRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("narration"),
     ...aiGenerationCreateBase,
-    input: MediaGenerationInputSchema,
+    // Task #33: the `narration` kind now carries its REAL input contract (voice + scenes).
+    input: GenerateNarrationInputSchema,
   }),
   z.object({
     kind: z.literal("music"),
     ...aiGenerationCreateBase,
-    input: MediaGenerationInputSchema,
+    // Task #33: the `music` kind now carries its REAL input contract (style + duration).
+    input: GenerateMusicInputSchema,
   }),
   z.object({
     kind: z.literal("video"),

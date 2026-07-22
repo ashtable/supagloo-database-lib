@@ -78,6 +78,12 @@ export const GENERATE_SCRIPT_WORKFLOW_NAME = "generateScript" as const;
 // queue, the DBOS static registry pins the same value. narration/music/video land on
 // their own workflows in #33/#34 and extend the map then.
 export const GENERATE_IMAGE_WORKFLOW_NAME = "generateImage" as const;
+// Task #33: the audio-generation workflow — ONE workflow covering BOTH audio kinds
+// (`narration` TTS + `music`), openrouter-only per §9-Q2, dispatching by the row's kind
+// (the generateScript storyboard/script precedent). Same shared-constant discipline: the
+// API enqueues to this exact name on the ai-generation queue, the DBOS static registry
+// pins the same value. Only `video` remains unwired (task #34).
+export const GENERATE_AUDIO_WORKFLOW_NAME = "generateAudio" as const;
 export const AI_GENERATION_QUEUE_NAME = "ai-generation" as const;
 
 export interface AiGenerationWorkflowTarget {
@@ -98,6 +104,18 @@ export const AI_GENERATION_WORKFLOW_BY_KIND = {
   // (AI_PROVIDERS_BY_KIND.image), enforced at enqueue (422) BEFORE this routing lookup.
   image: {
     workflowName: GENERATE_IMAGE_WORKFLOW_NAME,
+    queueName: AI_GENERATION_QUEUE_NAME,
+  },
+  // Task #33: BOTH audio kinds (narration + music) → the one generateAudio workflow, which
+  // dispatches by the row's kind (like generateScript for storyboard/script). Both are
+  // openrouter-only (AI_PROVIDERS_BY_KIND), enforced at enqueue (422) BEFORE this lookup.
+  // Only `video` stays unwired (task #34).
+  narration: {
+    workflowName: GENERATE_AUDIO_WORKFLOW_NAME,
+    queueName: AI_GENERATION_QUEUE_NAME,
+  },
+  music: {
+    workflowName: GENERATE_AUDIO_WORKFLOW_NAME,
     queueName: AI_GENERATION_QUEUE_NAME,
   },
 } as const satisfies Partial<Record<AiGenerationKind, AiGenerationWorkflowTarget>>;
