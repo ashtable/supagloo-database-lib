@@ -19,9 +19,14 @@ import type {
   VoiceDescriptor,
 } from "../../src/index";
 
+// §9-Q10 (broadened): Translation is a non-empty string, not a fixed enum — the licensed
+// set is validated at runtime against the live YouVersion collection, so any abbreviation
+// compiles (KJV/BSB stay the default; NIV/ESV/… are equally valid types).
 const translation: Translation = "KJV";
-// @ts-expect-error Translation is the "KJV" | "BSB" union — never "NIV"
-const badTranslation: Translation = "NIV";
+const nivTranslation: Translation = "NIV";
+// @ts-expect-error Translation is a string — never a non-string literal
+const badTranslation: Translation = 5;
+void nivTranslation;
 
 const voice: VoiceDescriptor = {
   description: "warm, weathered baritone",

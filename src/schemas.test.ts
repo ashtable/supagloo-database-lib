@@ -69,17 +69,19 @@ describe("Task #7 schemas — enum mirror consistency (vs live Prisma const)", (
   });
 });
 
-describe("Task #7 schemas — TranslationSchema (KJV | BSB only, §9-Q10)", () => {
-  it("accepts the two public-domain translations", () => {
-    expect(S.TranslationSchema.safeParse("KJV").success).toBe(true);
-    expect(S.TranslationSchema.safeParse("BSB").success).toBe(true);
-  });
-  it("rejects any non-public-domain / malformed translation", () => {
-    for (const bad of ["NIV", "ESV", "NLT", "", "kjv", "bsb"]) {
-      expect(S.TranslationSchema.safeParse(bad).success, `rejects ${bad}`).toBe(
-        false,
-      );
+describe("Task #7/#30 schemas — TranslationSchema (any licensed translation, §9-Q10)", () => {
+  // §9-Q10 (2026-07-18) SUPERSEDED the KJV/BSB-only enum: generation sources ANY
+  // translation YouVersion licenses to the app for the user's language. The *licensed set*
+  // is validated at runtime against the live "Get a Bible collection" call (task #30's
+  // fetchScripturePassage), NOT by this schema — so the schema is a non-empty string, not a
+  // fixed enum. KJV/BSB stay the pre-selected default; they are no longer the only members.
+  it("accepts any non-empty translation abbreviation", () => {
+    for (const ok of ["KJV", "BSB", "NIV", "ESV", "NLT", "NASB"]) {
+      expect(S.TranslationSchema.safeParse(ok).success, `accepts ${ok}`).toBe(true);
     }
+  });
+  it("rejects an empty translation", () => {
+    expect(S.TranslationSchema.safeParse("").success).toBe(false);
   });
 });
 
@@ -188,12 +190,17 @@ describe("Task #7 schemas — ProjectManifestSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects a scene translation outside KJV | BSB", () => {
-    const bad = {
+  it("accepts a scene translation beyond KJV/BSB (§9-Q10 broadening) but rejects an empty one", () => {
+    const niv = {
       ...validManifest,
       scenes: [{ ...validManifest.scenes[0], translation: "NIV" }],
     };
-    expect(S.ProjectManifestSchema.safeParse(bad).success).toBe(false);
+    expect(S.ProjectManifestSchema.safeParse(niv).success).toBe(true);
+    const empty = {
+      ...validManifest,
+      scenes: [{ ...validManifest.scenes[0], translation: "" }],
+    };
+    expect(S.ProjectManifestSchema.safeParse(empty).success).toBe(false);
   });
 
   it("rejects a scene missing visualPrompt or with a non-positive duration", () => {
@@ -275,7 +282,7 @@ describe("Task #7 schemas — GeneratedStoryboardSchema (LLM structured output)"
     ).toBe(false);
   });
 
-  it("rejects a scene missing suggestedDurationSeconds or with a bad translation", () => {
+  it("rejects a scene missing suggestedDurationSeconds or with an empty translation", () => {
     const { suggestedDurationSeconds: _d, ...noDur } = validStoryboard.scenes[0];
     expect(
       S.GeneratedStoryboardSchema.safeParse({
@@ -286,9 +293,18 @@ describe("Task #7 schemas — GeneratedStoryboardSchema (LLM structured output)"
     expect(
       S.GeneratedStoryboardSchema.safeParse({
         ...validStoryboard,
-        scenes: [{ ...validStoryboard.scenes[0], translation: "NIV" }],
+        scenes: [{ ...validStoryboard.scenes[0], translation: "" }],
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts a non-KJV/BSB scene translation (§9-Q10 broadening)", () => {
+    expect(
+      S.GeneratedStoryboardSchema.safeParse({
+        ...validStoryboard,
+        scenes: [{ ...validStoryboard.scenes[0], translation: "NIV" }],
+      }).success,
+    ).toBe(true);
   });
 
   it("requires whole-video narratorVoice and musicStyle", () => {

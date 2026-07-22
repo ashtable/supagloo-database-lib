@@ -86,12 +86,16 @@ export const JobStatusSchema = z.enum([
 ]);
 
 // ---------------------------------------------------------------------------
-// KJV/BSB generation constraint (§9-Q10). Zod-only — GalleryItem.translation is a
-// plain Prisma String, so display can carry any translation; only *generation*
-// (manifest + storyboard scenes) is constrained to the two public-domain texts.
+// Translation abbreviation (§9-Q10, broadened 2026-07-18 — supersedes the original
+// KJV/BSB-only enum). Generation now sources ANY translation YouVersion licenses to the
+// app for the user's chosen language. The *licensed set* is validated at runtime against
+// the live "Get a Bible collection" call (task #30 `fetchScripturePassage`), NOT by this
+// schema — so this is a non-empty string, not a fixed enum. KJV/BSB remain the
+// pre-selected default for new projects; they are no longer the only allowed members.
+// (Bible ids are never hardcoded — always resolved via the collection endpoint.)
 // ---------------------------------------------------------------------------
 
-export const TranslationSchema = z.enum(["KJV", "BSB"]);
+export const TranslationSchema = z.string().min(1);
 export type Translation = z.infer<typeof TranslationSchema>;
 
 // ---------------------------------------------------------------------------
@@ -209,6 +213,57 @@ export const SceneVisualPromptSchema = z.object({
   visualPrompt: z.string().min(1),
 });
 export type SceneVisualPrompt = z.infer<typeof SceneVisualPromptSchema>;
+
+// ---------------------------------------------------------------------------
+// GeneratedScriptSchema — LLM structured output for the `script` kind (Task #30)
+// ---------------------------------------------------------------------------
+
+/** The `script`-kind LLM result: single-scene text (§2.8). The scripture-text triple —
+ *  the regenerated `scriptText` plus the `reference`/`translation` it is based on (records
+ *  which translation the text is in). Deliberately omits the storyboard-composition fields
+ *  (name/visualPrompt/duration), which belong to storyboard assembly, not a single-scene
+ *  text regeneration — symmetric with `SceneVisualPromptSchema` being just the prompt. */
+export const GeneratedScriptSchema = z.object({
+  scriptText: z.string().min(1),
+  reference: z.string().min(1),
+  translation: TranslationSchema,
+});
+export type GeneratedScript = z.infer<typeof GeneratedScriptSchema>;
+
+// ---------------------------------------------------------------------------
+// generateScript workflow input (Task #30) — the subset of `AiGeneration.input` the
+// storyboard/script workflow reads. The full request is Zod-validated at enqueue (#31);
+// `.passthrough()` lets that richer contract add fields without breaking this workflow.
+// ---------------------------------------------------------------------------
+
+/** The scripture a generation is based on. Its PRESENCE on the input drives the workflow's
+ *  optional `fetchScripturePassage` step (VOTD/passage origins); topic-origin generations
+ *  omit it. `translation` is the abbreviation the user selected (validated against the live
+ *  YouVersion collection at generation time, §9-Q10); `language` scopes the collection call. */
+export const ScripturePassageRequestSchema = z.object({
+  reference: z.string().min(1),
+  translation: z.string().min(1),
+  language: z.string().min(1).default("eng"),
+});
+export type ScripturePassageRequest = z.infer<typeof ScripturePassageRequestSchema>;
+
+/** The `AiGeneration.input` subset for the storyboard/script kinds: a generation `brief`
+ *  (the instruction the LLM works from) + an optional `scripture` block. */
+export const GenerateScriptInputSchema = z
+  .object({
+    brief: z.string().min(1),
+    scripture: ScripturePassageRequestSchema.optional(),
+  })
+  .passthrough();
+export type GenerateScriptInput = z.infer<typeof GenerateScriptInputSchema>;
+
+/** The DBOS enqueue payload for `generateScript`. Everything the workflow needs is read
+ *  from the `AiGeneration` row (keyed by the workflow id); the payload just echoes the
+ *  generation id (= workflow id) so the API's enqueue call is self-describing. */
+export const GenerateScriptPayloadSchema = z.object({
+  generationId: z.string().min(1),
+});
+export type GenerateScriptPayload = z.infer<typeof GenerateScriptPayloadSchema>;
 
 // ---------------------------------------------------------------------------
 // NarrationSpecSchema / MusicSpecSchema — audio-synthesis inputs
@@ -870,8 +925,9 @@ export type CreateRepoRequest = z.infer<typeof CreateRepoRequestSchema>;
 // The API<->BFF contract for `POST /v1/projects/:id/commit` (create a `commit`
 // ProjectJob, then DBOSClient.enqueue(commitVersion)) and the API<->DBOS enqueue payload.
 // The request carries the EDITED manifest + a commit message; the manifest is validated
-// against `ProjectManifestSchema` (whose `TranslationSchema` is KJV/BSB-only, so a
-// non-KJV/BSB manifest is rejected at the boundary). The payload additionally carries the
+// against `ProjectManifestSchema` (whose `TranslationSchema` accepts any non-empty licensed
+// abbreviation per §9-Q10, so only a structurally-invalid manifest is rejected at the
+// boundary — the licensed set is validated against the live collection). The payload additionally carries the
 // working `branchName` + the working version's `semver` (so the workflow can clone the
 // right branch and key `updateVersionRecord`'s upsert without an extra DB round-trip) plus
 // the installation/repo coordinates. Task 21 UPDATES the existing working ProjectVersion

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import * as DbLib from "./index";
 import {
+  AI_GENERATION_QUEUE_NAME,
+  AI_GENERATION_WORKFLOW_BY_KIND,
   COMMIT_VERSION_WORKFLOW_NAME,
+  GENERATE_SCRIPT_WORKFLOW_NAME,
   GIT_OPS_QUEUE_NAME,
   GIT_OPS_WORKFLOW_BY_KIND,
   IMPORT_PROJECT_WORKFLOW_NAME,
@@ -75,6 +78,31 @@ describe("Task #18/19 workflows — GIT_OPS_WORKFLOW_BY_KIND", () => {
       "import_verify",
       "commit",
       "publish",
+    ]);
+  });
+});
+
+describe("Task #30 workflows — generateScript name + ai-generation queue", () => {
+  it("pins the generate-script workflow name and the ai-generation queue name", () => {
+    expect(GENERATE_SCRIPT_WORKFLOW_NAME).toBe("generateScript");
+    expect(AI_GENERATION_QUEUE_NAME).toBe("ai-generation");
+  });
+
+  it("routes both text kinds (storyboard + script) to generateScript on ai-generation", () => {
+    expect(AI_GENERATION_WORKFLOW_BY_KIND.storyboard).toEqual({
+      workflowName: GENERATE_SCRIPT_WORKFLOW_NAME,
+      queueName: AI_GENERATION_QUEUE_NAME,
+    });
+    expect(AI_GENERATION_WORKFLOW_BY_KIND.script).toEqual({
+      workflowName: GENERATE_SCRIPT_WORKFLOW_NAME,
+      queueName: AI_GENERATION_QUEUE_NAME,
+    });
+  });
+
+  it("covers exactly the two text kinds now wired (media kinds land in #32–34)", () => {
+    expect(Object.keys(AI_GENERATION_WORKFLOW_BY_KIND).sort()).toEqual([
+      "script",
+      "storyboard",
     ]);
   });
 });
