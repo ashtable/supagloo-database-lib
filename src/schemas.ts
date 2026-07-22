@@ -1044,3 +1044,133 @@ export const ManifestResponseSchema = z.object({
   manifest: ProjectManifestSchema,
 });
 export type ManifestResponse = z.infer<typeof ManifestResponseSchema>;
+
+// ===========================================================================
+// AI generations WIRE DTOs (Task #31 — design-delta §2.8/§7/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the four AI-generation endpoints (POST create + enqueue,
+// GET by id, GET project-scoped list, POST cancel). `AiGeneration.id` IS the DBOS
+// workflow id; the enqueue payload is the existing `GenerateScriptPayloadSchema`
+// (`{generationId}`) — everything else is read off the row.
+//
+// The create request is a discriminated union on `kind` so the Fastify/Zod boundary
+// validates the kind-specific `input` structurally (→ 400 on a bad/unknown kind or
+// malformed input) with no service branching. The kind->provider COMPATIBILITY matrix
+// (`AI_PROVIDERS_BY_KIND` in ./workflows) is a SEMANTIC check enforced by the service
+// (→ 422), deliberately NOT folded into this union, so the two gates keep distinct
+// status codes. `storyboard`/`script` carry the real `GenerateScriptInputSchema`; the
+// media kinds carry a permissive passthrough placeholder until #32–34 design their real
+// input contracts (the POST 501s those kinds before their `input` is ever consumed).
+// ===========================================================================
+
+/** Placeholder input for the not-yet-built media kinds (image/narration/music/video).
+ *  Accepts any object; the real per-kind contracts land with their workflows (#32–34).
+ *  Today the POST rejects these kinds with 501 before this input is consumed. */
+export const MediaGenerationInputSchema = z.object({}).passthrough();
+export type MediaGenerationInput = z.infer<typeof MediaGenerationInputSchema>;
+
+// Fields shared by every create-generation variant (spread into each union member so
+// the discriminant `kind` + its per-kind `input` stay explicit). `projectId`/`sceneId`
+// are optional (a generation may have no project and no manifest scene).
+const aiGenerationCreateBase = {
+  provider: AiProviderSchema,
+  model: z.string().min(1),
+  projectId: z.string().min(1).optional(),
+  sceneId: z.string().min(1).optional(),
+} as const;
+
+/** `POST /v1/ai/generations` request body (design-delta §8, sequence diagram (b):
+ *  `{kind, provider, model, projectId, sceneId, input}`). Discriminated on `kind` so the
+ *  kind-specific `input` is validated at the wire boundary. Text kinds → the real
+ *  `GenerateScriptInputSchema`; media kinds → the passthrough placeholder. */
+export const CreateAiGenerationRequestSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("storyboard"),
+    ...aiGenerationCreateBase,
+    input: GenerateScriptInputSchema,
+  }),
+  z.object({
+    kind: z.literal("script"),
+    ...aiGenerationCreateBase,
+    input: GenerateScriptInputSchema,
+  }),
+  z.object({
+    kind: z.literal("image"),
+    ...aiGenerationCreateBase,
+    input: MediaGenerationInputSchema,
+  }),
+  z.object({
+    kind: z.literal("narration"),
+    ...aiGenerationCreateBase,
+    input: MediaGenerationInputSchema,
+  }),
+  z.object({
+    kind: z.literal("music"),
+    ...aiGenerationCreateBase,
+    input: MediaGenerationInputSchema,
+  }),
+  z.object({
+    kind: z.literal("video"),
+    ...aiGenerationCreateBase,
+    input: MediaGenerationInputSchema,
+  }),
+]);
+export type CreateAiGenerationRequest = z.infer<
+  typeof CreateAiGenerationRequestSchema
+>;
+
+/** An `AiGeneration` on the wire (design-delta §2.8) — the poll shape the client reads
+ *  after create. Omits `userId` (the caller is the owner — connection-DTO precedent),
+ *  `providerJobId` (internal), and `input` (a lean status+result view, like
+ *  `ProjectJobDto`). `resultJson`/`tokenUsage` are pass-through JSON (their shape varies
+ *  by kind and was validated by the workflow when written). `resultAssetKey` is the RAW
+ *  key — the client presigns it via `GET /v1/files/presign-download?key=` (that route
+ *  ownership-scopes it), so this DTO stays a pure row projection with no S3 coupling.
+ *  `createdAt`/`completedAt` are ISO-8601. */
+export const AiGenerationDtoSchema = z.object({
+  id: z.string(),
+  projectId: z.string().nullable(),
+  sceneId: z.string().nullable(),
+  kind: AiGenerationKindSchema,
+  provider: AiProviderSchema,
+  model: z.string(),
+  status: JobStatusSchema,
+  resultJson: z.unknown().nullable(),
+  resultAssetKey: z.string().nullable(),
+  error: z.string().nullable(),
+  tokenUsage: z.unknown().nullable(),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+export type AiGenerationDto = z.infer<typeof AiGenerationDtoSchema>;
+
+/** `POST /v1/ai/generations` response — the new generation's id (= workflow id). Mirrors
+ *  `POST /v1/projects` returning ids only; the client polls `GET /:id`. */
+export const CreateAiGenerationResponseSchema = z.object({
+  generationId: z.string(),
+});
+export type CreateAiGenerationResponse = z.infer<
+  typeof CreateAiGenerationResponseSchema
+>;
+
+/** `GET /v1/ai/generations/:id` and `POST /v1/ai/generations/:id/cancel` response. */
+export const AiGenerationResponseSchema = z.object({
+  generation: AiGenerationDtoSchema,
+});
+export type AiGenerationResponse = z.infer<typeof AiGenerationResponseSchema>;
+
+/** `GET /v1/projects/:id/generations` response — the project's generations, newest
+ *  first. */
+export const AiGenerationListResponseSchema = z.object({
+  generations: z.array(AiGenerationDtoSchema),
+});
+export type AiGenerationListResponse = z.infer<
+  typeof AiGenerationListResponseSchema
+>;
+
+/** `:id` path param for the by-id / cancel routes (the project-scoped list reuses
+ *  `ProjectIdParamSchema`). */
+export const AiGenerationIdParamSchema = z.object({
+  id: z.string().min(1),
+});
+export type AiGenerationIdParam = z.infer<typeof AiGenerationIdParamSchema>;

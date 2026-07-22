@@ -1,0 +1,207 @@
+import { describe, expect, it } from "vitest";
+import * as DbLib from "./index";
+import {
+  AiGenerationDtoSchema,
+  AiGenerationIdParamSchema,
+  AiGenerationListResponseSchema,
+  AiGenerationResponseSchema,
+  CreateAiGenerationRequestSchema,
+  CreateAiGenerationResponseSchema,
+  MediaGenerationInputSchema,
+} from "./schemas";
+
+// Task #31: the four-endpoint wire DTOs (design-delta §2.8/§8). The create request is a
+// discriminated union on `kind` (structural kind+input validation at the wire boundary →
+// 400); the kind→provider matrix is a SEPARATE service check (→ 422). DB-free.
+
+describe("Task #31 CreateAiGenerationRequestSchema", () => {
+  it("accepts a valid storyboard request with the real generate-script input", () => {
+    const parsed = CreateAiGenerationRequestSchema.safeParse({
+      kind: "storyboard",
+      provider: "openrouter",
+      model: "openai/gpt-4o",
+      projectId: "proj_1",
+      sceneId: "scene_1",
+      input: { brief: "Psalm 121 short" },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts a script request with optional scripture and no project/scene", () => {
+    const parsed = CreateAiGenerationRequestSchema.safeParse({
+      kind: "script",
+      provider: "gloo",
+      model: "gloo/model",
+      input: {
+        brief: "regenerate the text",
+        scripture: { reference: "John 3:16", translation: "KJV" },
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects a text kind whose input is missing the required brief (structural 400)", () => {
+    const parsed = CreateAiGenerationRequestSchema.safeParse({
+      kind: "storyboard",
+      provider: "openrouter",
+      model: "m",
+      input: {},
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts a media kind with arbitrary passthrough input (contract deferred to #32-34)", () => {
+    const parsed = CreateAiGenerationRequestSchema.safeParse({
+      kind: "image",
+      provider: "openrouter",
+      model: "some/image-model",
+      input: { anything: "goes", nested: { ok: true } },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts image+gloo STRUCTURALLY (the matrix 422 is a service check, not this union)", () => {
+    const parsed = CreateAiGenerationRequestSchema.safeParse({
+      kind: "image",
+      provider: "gloo",
+      model: "m",
+      input: {},
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects an unknown kind and an unknown provider", () => {
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "hologram",
+        provider: "openrouter",
+        model: "m",
+        input: {},
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "script",
+        provider: "anthropic",
+        model: "m",
+        input: { brief: "x" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a missing/empty model", () => {
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "script",
+        provider: "gloo",
+        model: "",
+        input: { brief: "x" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("Task #31 AiGenerationDtoSchema", () => {
+  it("round-trips a full DTO incl. arbitrary resultJson + tokenUsage", () => {
+    const dto = {
+      id: "gen_1",
+      projectId: "proj_1",
+      sceneId: "scene_1",
+      kind: "storyboard" as const,
+      provider: "openrouter" as const,
+      model: "openai/gpt-4o",
+      status: "succeeded" as const,
+      resultJson: { scenes: [{ name: "s1" }], musicStyle: "calm" },
+      resultAssetKey: null,
+      error: null,
+      tokenUsage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    const parsed = AiGenerationDtoSchema.parse(dto);
+    expect(parsed.resultJson).toEqual(dto.resultJson);
+    expect(parsed.tokenUsage).toEqual(dto.tokenUsage);
+  });
+
+  it("accepts the nullable fields as null (a queued generation with no project/scene)", () => {
+    const parsed = AiGenerationDtoSchema.safeParse({
+      id: "gen_2",
+      projectId: null,
+      sceneId: null,
+      kind: "script",
+      provider: "gloo",
+      model: "m",
+      status: "queued",
+      resultJson: null,
+      resultAssetKey: null,
+      error: null,
+      tokenUsage: null,
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+    });
+    expect(parsed.success).toBe(true);
+  });
+});
+
+describe("Task #31 response / list / param schemas", () => {
+  it("CreateAiGenerationResponseSchema carries the generationId", () => {
+    expect(
+      CreateAiGenerationResponseSchema.parse({ generationId: "gen_1" }),
+    ).toEqual({ generationId: "gen_1" });
+  });
+
+  it("AiGenerationResponseSchema wraps a single DTO", () => {
+    const parsed = AiGenerationResponseSchema.safeParse({
+      generation: {
+        id: "g",
+        projectId: null,
+        sceneId: null,
+        kind: "script",
+        provider: "gloo",
+        model: "m",
+        status: "queued",
+        resultJson: null,
+        resultAssetKey: null,
+        error: null,
+        tokenUsage: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("AiGenerationListResponseSchema wraps an array", () => {
+    expect(
+      AiGenerationListResponseSchema.parse({ generations: [] }),
+    ).toEqual({ generations: [] });
+  });
+
+  it("AiGenerationIdParamSchema requires a non-empty id", () => {
+    expect(AiGenerationIdParamSchema.safeParse({ id: "x" }).success).toBe(true);
+    expect(AiGenerationIdParamSchema.safeParse({ id: "" }).success).toBe(false);
+  });
+
+  it("MediaGenerationInputSchema is a passthrough object", () => {
+    expect(MediaGenerationInputSchema.parse({ a: 1 })).toEqual({ a: 1 });
+    expect(MediaGenerationInputSchema.safeParse("nope").success).toBe(false);
+  });
+});
+
+describe("Task #31 schemas are re-exported from the barrel", () => {
+  it("exposes each schema on the package index", () => {
+    expect(DbLib.CreateAiGenerationRequestSchema).toBe(
+      CreateAiGenerationRequestSchema,
+    );
+    expect(DbLib.AiGenerationDtoSchema).toBe(AiGenerationDtoSchema);
+    expect(DbLib.AiGenerationResponseSchema).toBe(AiGenerationResponseSchema);
+    expect(DbLib.AiGenerationListResponseSchema).toBe(
+      AiGenerationListResponseSchema,
+    );
+    expect(DbLib.CreateAiGenerationResponseSchema).toBe(
+      CreateAiGenerationResponseSchema,
+    );
+    expect(DbLib.AiGenerationIdParamSchema).toBe(AiGenerationIdParamSchema);
+    expect(DbLib.MediaGenerationInputSchema).toBe(MediaGenerationInputSchema);
+  });
+});
