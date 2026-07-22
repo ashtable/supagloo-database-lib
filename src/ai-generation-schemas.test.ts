@@ -7,7 +7,10 @@ import {
   AiGenerationResponseSchema,
   CreateAiGenerationRequestSchema,
   CreateAiGenerationResponseSchema,
+  GenerateAudioPayloadSchema,
   GenerateImageInputSchema,
+  GenerateMusicInputSchema,
+  GenerateNarrationInputSchema,
   MediaGenerationInputSchema,
 } from "./schemas";
 
@@ -51,14 +54,101 @@ describe("Task #31 CreateAiGenerationRequestSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("accepts a still-placeholder media kind (narration) with arbitrary passthrough input (contract deferred to #33-34)", () => {
+  it("accepts a still-placeholder media kind (video) with arbitrary passthrough input (contract deferred to #34)", () => {
     const parsed = CreateAiGenerationRequestSchema.safeParse({
-      kind: "narration",
+      kind: "video",
       provider: "openrouter",
-      model: "some/audio-model",
+      model: "some/video-model",
       input: { anything: "goes", nested: { ok: true } },
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("requires a real narration spec (voice + at least one scene) now that narration is wired (Task #33)", () => {
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "narration",
+        provider: "openrouter",
+        model: "some/speech-model",
+        projectId: "proj_1",
+        input: {
+          voice: { description: "warm, weathered baritone", label: "JEJ-STYLE" },
+          scenes: [
+            { sceneId: "s1", scriptText: "I am the voice of one" },
+            { sceneId: "s2", scriptText: "crying in the wilderness" },
+          ],
+          extra: "tolerated by passthrough",
+        },
+      }).success,
+    ).toBe(true);
+    // Empty input is no longer accepted (was a passthrough placeholder pre-#33).
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "narration",
+        provider: "openrouter",
+        model: "some/speech-model",
+        input: {},
+      }).success,
+    ).toBe(false);
+    // A voice with no scenes fails the min(1) scenes constraint.
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "narration",
+        provider: "openrouter",
+        model: "some/speech-model",
+        input: { voice: { description: "x" }, scenes: [] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires a real music spec (style + positive duration) now that music is wired (Task #33)", () => {
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "music",
+        provider: "openrouter",
+        model: "some/music-model",
+        projectId: "proj_1",
+        input: { style: "Swelling strings", durationSeconds: 30, tempo: "andante" },
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "music",
+        provider: "openrouter",
+        model: "some/music-model",
+        input: {},
+      }).success,
+    ).toBe(false);
+    // Non-positive duration fails.
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "music",
+        provider: "openrouter",
+        model: "some/music-model",
+        input: { style: "ambient", durationSeconds: 0 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("GenerateNarrationInputSchema / GenerateMusicInputSchema are passthrough over the specs", () => {
+    expect(
+      GenerateNarrationInputSchema.safeParse({
+        voice: { description: "x" },
+        scenes: [{ sceneId: "s1", scriptText: "hello" }],
+      }).success,
+    ).toBe(true);
+    expect(GenerateNarrationInputSchema.safeParse({ scenes: [] }).success).toBe(false);
+    expect(
+      GenerateMusicInputSchema.safeParse({ style: "calm", durationSeconds: 12 }).success,
+    ).toBe(true);
+    expect(GenerateMusicInputSchema.safeParse({ style: "" }).success).toBe(false);
+  });
+
+  it("GenerateAudioPayloadSchema is the { generationId } enqueue echo", () => {
+    expect(GenerateAudioPayloadSchema.parse({ generationId: "gen_1" })).toEqual({
+      generationId: "gen_1",
+    });
+    expect(GenerateAudioPayloadSchema.safeParse({ generationId: "" }).success).toBe(false);
   });
 
   it("requires a prompt for the image kind now that it has a real input schema (Task #32)", () => {
