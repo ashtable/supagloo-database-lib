@@ -1,4 +1,8 @@
-import type { AiGenerationKind, ProjectJobKind } from "./generated/prisma/client";
+import type {
+  AiGenerationKind,
+  AiProvider,
+  ProjectJobKind,
+} from "./generated/prisma/client";
 
 /**
  * The static `kind → workflow` routing contract for git-ops ProjectJobs
@@ -86,3 +90,38 @@ export const AI_GENERATION_WORKFLOW_BY_KIND = {
     queueName: AI_GENERATION_QUEUE_NAME,
   },
 } as const satisfies Partial<Record<AiGenerationKind, AiGenerationWorkflowTarget>>;
+
+/**
+ * The kind→provider COMPATIBILITY MATRIX (design-delta §7 "Provider call patterns",
+ * §9-Q2), promoted here as the single shared constant the design mandates ("defined once
+ * as a shared database-lib constant and enforced (422) at POST /v1/ai/generations BEFORE
+ * any row or workflow is created"). The API's create-generation service (#31) validates
+ * `{kind, provider}` against this and rejects out-of-matrix pairs with 422.
+ *
+ * The two TEXT kinds (`storyboard`/`script`) can run on EITHER provider — both expose a
+ * chat/structured-output surface. The four MEDIA kinds (`image`/`narration`/`music`/
+ * `video`) are `openrouter` ONLY: Gloo has no media modalities (§9-Q2). Unlike the
+ * partial workflow table above, this is a COMPLETE record — the matrix is fully known
+ * today even though the media WORKFLOWS land in #32–34 (a matrix-valid pair whose
+ * workflow is not yet registered is a DIFFERENT, later failure mode, not a matrix
+ * rejection).
+ */
+export const AI_PROVIDERS_BY_KIND = {
+  storyboard: ["gloo", "openrouter"],
+  script: ["gloo", "openrouter"],
+  image: ["openrouter"],
+  narration: ["openrouter"],
+  music: ["openrouter"],
+  video: ["openrouter"],
+} as const satisfies Record<AiGenerationKind, readonly AiProvider[]>;
+
+/** True iff `provider` may serve `kind` per {@link AI_PROVIDERS_BY_KIND}. The API's
+ *  create path calls this and 422s a `false` result before creating any row/workflow. */
+export function isProviderCompatible(
+  kind: AiGenerationKind,
+  provider: AiProvider,
+): boolean {
+  return (AI_PROVIDERS_BY_KIND[kind] as readonly AiProvider[]).includes(
+    provider,
+  );
+}
