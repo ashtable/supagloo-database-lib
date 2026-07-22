@@ -7,6 +7,7 @@ import {
   AiGenerationResponseSchema,
   CreateAiGenerationRequestSchema,
   CreateAiGenerationResponseSchema,
+  GenerateImageInputSchema,
   MediaGenerationInputSchema,
 } from "./schemas";
 
@@ -50,22 +51,41 @@ describe("Task #31 CreateAiGenerationRequestSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("accepts a media kind with arbitrary passthrough input (contract deferred to #32-34)", () => {
+  it("accepts a still-placeholder media kind (narration) with arbitrary passthrough input (contract deferred to #33-34)", () => {
     const parsed = CreateAiGenerationRequestSchema.safeParse({
-      kind: "image",
+      kind: "narration",
       provider: "openrouter",
-      model: "some/image-model",
+      model: "some/audio-model",
       input: { anything: "goes", nested: { ok: true } },
     });
     expect(parsed.success).toBe(true);
   });
 
-  it("accepts image+gloo STRUCTURALLY (the matrix 422 is a service check, not this union)", () => {
+  it("requires a prompt for the image kind now that it has a real input schema (Task #32)", () => {
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "image",
+        provider: "openrouter",
+        model: "some/image-model",
+        input: { prompt: "a serene sunrise over hills", extra: "ok" },
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "image",
+        provider: "openrouter",
+        model: "some/image-model",
+        input: {},
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts image+gloo STRUCTURALLY when the prompt is present (the matrix 422 is a service check, not this union)", () => {
     const parsed = CreateAiGenerationRequestSchema.safeParse({
       kind: "image",
       provider: "gloo",
       model: "m",
-      input: {},
+      input: { prompt: "x" },
     });
     expect(parsed.success).toBe(true);
   });
@@ -98,6 +118,29 @@ describe("Task #31 CreateAiGenerationRequestSchema", () => {
         input: { brief: "x" },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("Task #32 GenerateImageInputSchema — the real image input", () => {
+  it("accepts a non-empty prompt", () => {
+    expect(
+      GenerateImageInputSchema.parse({ prompt: "a serene sunrise over hills" }),
+    ).toMatchObject({ prompt: "a serene sunrise over hills" });
+  });
+
+  it("rejects a missing or empty prompt", () => {
+    expect(GenerateImageInputSchema.safeParse({}).success).toBe(false);
+    expect(GenerateImageInputSchema.safeParse({ prompt: "" }).success).toBe(false);
+  });
+
+  it("tolerates extra keys (passthrough so #33-34 richer contracts can extend it)", () => {
+    const parsed = GenerateImageInputSchema.parse({
+      prompt: "x",
+      size: "1024x1024",
+      seed: 7,
+    });
+    expect(parsed.prompt).toBe("x");
+    expect((parsed as Record<string, unknown>).size).toBe("1024x1024");
   });
 });
 
@@ -203,5 +246,6 @@ describe("Task #31 schemas are re-exported from the barrel", () => {
     );
     expect(DbLib.AiGenerationIdParamSchema).toBe(AiGenerationIdParamSchema);
     expect(DbLib.MediaGenerationInputSchema).toBe(MediaGenerationInputSchema);
+    expect(DbLib.GenerateImageInputSchema).toBe(GenerateImageInputSchema);
   });
 });

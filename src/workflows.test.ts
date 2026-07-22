@@ -4,6 +4,7 @@ import {
   AI_GENERATION_QUEUE_NAME,
   AI_GENERATION_WORKFLOW_BY_KIND,
   COMMIT_VERSION_WORKFLOW_NAME,
+  GENERATE_IMAGE_WORKFLOW_NAME,
   GENERATE_SCRIPT_WORKFLOW_NAME,
   GIT_OPS_QUEUE_NAME,
   GIT_OPS_WORKFLOW_BY_KIND,
@@ -99,11 +100,29 @@ describe("Task #30 workflows — generateScript name + ai-generation queue", () 
     });
   });
 
-  it("covers exactly the two text kinds now wired (media kinds land in #32–34)", () => {
+  it("covers the two text kinds + image now wired (narration/music/video land in #33–34)", () => {
     expect(Object.keys(AI_GENERATION_WORKFLOW_BY_KIND).sort()).toEqual([
+      "image",
       "script",
       "storyboard",
     ]);
+  });
+});
+
+describe("Task #32 workflows — generateImage name + ai-generation queue", () => {
+  it("pins the generate-image workflow name", () => {
+    expect(GENERATE_IMAGE_WORKFLOW_NAME).toBe("generateImage");
+  });
+
+  it("routes the image kind to generateImage on the ai-generation queue", () => {
+    expect(AI_GENERATION_WORKFLOW_BY_KIND.image).toEqual({
+      workflowName: GENERATE_IMAGE_WORKFLOW_NAME,
+      queueName: AI_GENERATION_QUEUE_NAME,
+    });
+  });
+
+  it("re-exports the generate-image name from the barrel", () => {
+    expect(DbLib.GENERATE_IMAGE_WORKFLOW_NAME).toBe("generateImage");
   });
 });
 

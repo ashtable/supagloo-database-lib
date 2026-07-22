@@ -266,6 +266,31 @@ export const GenerateScriptPayloadSchema = z.object({
 export type GenerateScriptPayload = z.infer<typeof GenerateScriptPayloadSchema>;
 
 // ---------------------------------------------------------------------------
+// generateImage workflow input + payload (Task #32) — the subset of
+// `AiGeneration.input` the image workflow reads. Replaces the task-31
+// `MediaGenerationInputSchema` placeholder for the `image` kind.
+// ---------------------------------------------------------------------------
+
+/** The `AiGeneration.input` for the `image` kind: the text→image `prompt` the model
+ *  generates from. `.passthrough()` (same discipline as `GenerateScriptInputSchema`) lets a
+ *  future richer contract add fields (size/seed/negativePrompt) without breaking the
+ *  workflow. Distinct from `SceneVisualPromptSchema`, which is an LLM *output* schema
+ *  (the "↻ Reroll visual" result), not a generation *input*. */
+export const GenerateImageInputSchema = z
+  .object({
+    prompt: z.string().min(1),
+  })
+  .passthrough();
+export type GenerateImageInput = z.infer<typeof GenerateImageInputSchema>;
+
+/** The DBOS enqueue payload for `generateImage`. Same `{generationId}` echo as
+ *  `generateScript` — everything else is read off the `AiGeneration` row. */
+export const GenerateImagePayloadSchema = z.object({
+  generationId: z.string().min(1),
+});
+export type GenerateImagePayload = z.infer<typeof GenerateImagePayloadSchema>;
+
+// ---------------------------------------------------------------------------
 // NarrationSpecSchema / MusicSpecSchema — audio-synthesis inputs
 // ---------------------------------------------------------------------------
 
@@ -1063,9 +1088,10 @@ export type ManifestResponse = z.infer<typeof ManifestResponseSchema>;
 // input contracts (the POST 501s those kinds before their `input` is ever consumed).
 // ===========================================================================
 
-/** Placeholder input for the not-yet-built media kinds (image/narration/music/video).
- *  Accepts any object; the real per-kind contracts land with their workflows (#32–34).
- *  Today the POST rejects these kinds with 501 before this input is consumed. */
+/** Placeholder input for the still-not-built media kinds (narration/music/video). Accepts
+ *  any object; the real per-kind contracts land with their workflows (#33–34). Today the
+ *  POST rejects these kinds with 501 before this input is consumed. (Task #32 gave `image`
+ *  its real `GenerateImageInputSchema` — it is no longer a placeholder kind.) */
 export const MediaGenerationInputSchema = z.object({}).passthrough();
 export type MediaGenerationInput = z.infer<typeof MediaGenerationInputSchema>;
 
@@ -1097,7 +1123,8 @@ export const CreateAiGenerationRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("image"),
     ...aiGenerationCreateBase,
-    input: MediaGenerationInputSchema,
+    // Task #32: the `image` kind now carries its REAL input contract (requires a prompt).
+    input: GenerateImageInputSchema,
   }),
   z.object({
     kind: z.literal("narration"),
