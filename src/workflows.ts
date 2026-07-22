@@ -1,4 +1,4 @@
-import type { ProjectJobKind } from "./generated/prisma/client";
+import type { AiGenerationKind, ProjectJobKind } from "./generated/prisma/client";
 
 /**
  * The static `kind → workflow` routing contract for git-ops ProjectJobs
@@ -56,3 +56,33 @@ export const GIT_OPS_WORKFLOW_BY_KIND = {
     queueName: GIT_OPS_QUEUE_NAME,
   },
 } as const satisfies Partial<Record<ProjectJobKind, GitOpsWorkflowTarget>>;
+
+/**
+ * The static `AiGenerationKind → workflow` routing for the `ai-generation` queue
+ * (design-delta §5.1/§7 workflow 5). Same shared-constant discipline as the git-ops table:
+ * the API's enqueue lookup (#31/#35) and the DBOS static registry import the SAME values, so
+ * they can never disagree on the generation workflow name/queue.
+ *
+ * Task #30 wires the two TEXT kinds — `storyboard` (full scene breakdown) and `script`
+ * (single-scene text) — both to the one `generateScript` workflow, which selects the target
+ * Zod schema by the request row's `kind`. The media kinds (image/narration/music/video) land
+ * on their own workflows in tasks #32–34 and extend this table then.
+ */
+export const GENERATE_SCRIPT_WORKFLOW_NAME = "generateScript" as const;
+export const AI_GENERATION_QUEUE_NAME = "ai-generation" as const;
+
+export interface AiGenerationWorkflowTarget {
+  workflowName: string;
+  queueName: string;
+}
+
+export const AI_GENERATION_WORKFLOW_BY_KIND = {
+  storyboard: {
+    workflowName: GENERATE_SCRIPT_WORKFLOW_NAME,
+    queueName: AI_GENERATION_QUEUE_NAME,
+  },
+  script: {
+    workflowName: GENERATE_SCRIPT_WORKFLOW_NAME,
+    queueName: AI_GENERATION_QUEUE_NAME,
+  },
+} as const satisfies Partial<Record<AiGenerationKind, AiGenerationWorkflowTarget>>;

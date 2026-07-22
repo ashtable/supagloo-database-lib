@@ -7,8 +7,11 @@ import * as S from "./schemas";
 // edited manifest + a commit message; the payload additionally carries everything the
 // workflow needs to avoid a DB round-trip before step 1 (branchName + the working
 // version's semver + the installation/repo coordinates). The manifest is validated against
-// the shared `ProjectManifestSchema`, whose `TranslationSchema` is KJV/BSB-only — so a
-// non-KJV/BSB manifest is rejected AT THE BOUNDARY with no task-specific work. DB-free.
+// the shared `ProjectManifestSchema`. Per §9-Q10 (broadened in task #30), the scene
+// `translation` is any non-empty licensed abbreviation — so a non-KJV/BSB manifest now
+// PASSES the boundary (it is validated against the live collection at generation time, not
+// this schema); only a structurally-invalid manifest (e.g. empty translation) is rejected
+// here with no task-specific work. DB-free.
 
 const VALID_MANIFEST = {
   manifestVersion: 1,
@@ -50,13 +53,21 @@ describe("Task #21 — CommitVersionRequestSchema", () => {
     expect(S.CommitVersionRequestSchema.safeParse(VALID_REQUEST).success).toBe(true);
   });
 
-  it("REJECTS a manifest whose scene translation is non-KJV/BSB (boundary validation)", () => {
+  it("ACCEPTS a non-KJV/BSB manifest (§9-Q10 broadening) but rejects a structurally-invalid one", () => {
     const nivManifest = {
       ...VALID_MANIFEST,
       scenes: [{ ...VALID_MANIFEST.scenes[0], translation: "NIV" }],
     };
     expect(
       S.CommitVersionRequestSchema.safeParse({ ...VALID_REQUEST, manifest: nivManifest })
+        .success,
+    ).toBe(true);
+    const emptyTranslation = {
+      ...VALID_MANIFEST,
+      scenes: [{ ...VALID_MANIFEST.scenes[0], translation: "" }],
+    };
+    expect(
+      S.CommitVersionRequestSchema.safeParse({ ...VALID_REQUEST, manifest: emptyTranslation })
         .success,
     ).toBe(false);
   });
@@ -98,7 +109,7 @@ describe("Task #21 — CommitVersionPayloadSchema (enqueue contract)", () => {
     }
   });
 
-  it("rejects a payload whose manifest is a non-KJV/BSB manifest", () => {
+  it("accepts a payload whose manifest carries a non-KJV/BSB translation (§9-Q10)", () => {
     const nivManifest = {
       ...VALID_MANIFEST,
       scenes: [{ ...VALID_MANIFEST.scenes[0], translation: "NIV" }],
@@ -106,7 +117,7 @@ describe("Task #21 — CommitVersionPayloadSchema (enqueue contract)", () => {
     expect(
       S.CommitVersionPayloadSchema.safeParse({ ...VALID_PAYLOAD, manifest: nivManifest })
         .success,
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
