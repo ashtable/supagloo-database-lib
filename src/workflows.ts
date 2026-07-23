@@ -67,10 +67,11 @@ export const GIT_OPS_WORKFLOW_BY_KIND = {
  * the API's enqueue lookup (#31/#35) and the DBOS static registry import the SAME values, so
  * they can never disagree on the generation workflow name/queue.
  *
- * Task #30 wires the two TEXT kinds — `storyboard` (full scene breakdown) and `script`
+ * Task #30 wired the two TEXT kinds — `storyboard` (full scene breakdown) and `script`
  * (single-scene text) — both to the one `generateScript` workflow, which selects the target
- * Zod schema by the request row's `kind`. The media kinds (image/narration/music/video) land
- * on their own workflows in tasks #32–34 and extend this table then.
+ * Zod schema by the request row's `kind`. The media kinds landed on their own workflows in
+ * tasks #32–34 (`generateImage`, `generateAudio` for narration+music, `generateVideo`). As of
+ * #34 this table is COMPLETE — every `AiGenerationKind` routes to a real registered workflow.
  */
 export const GENERATE_SCRIPT_WORKFLOW_NAME = "generateScript" as const;
 // Task #32: the image-generation workflow (openrouter-only per §9-Q2). Same
@@ -82,8 +83,13 @@ export const GENERATE_IMAGE_WORKFLOW_NAME = "generateImage" as const;
 // (`narration` TTS + `music`), openrouter-only per §9-Q2, dispatching by the row's kind
 // (the generateScript storyboard/script precedent). Same shared-constant discipline: the
 // API enqueues to this exact name on the ai-generation queue, the DBOS static registry
-// pins the same value. Only `video` remains unwired (task #34).
+// pins the same value.
 export const GENERATE_AUDIO_WORKFLOW_NAME = "generateAudio" as const;
+// Task #34: the video-generation workflow — OpenRouter's async video-job API (submit → poll
+// with durable ~30s sleeps → download → upload). openrouter-only per §9-Q2. Same
+// shared-constant discipline. This wires the LAST AI-generation kind — every kind now routes
+// to a real registered workflow.
+export const GENERATE_VIDEO_WORKFLOW_NAME = "generateVideo" as const;
 export const AI_GENERATION_QUEUE_NAME = "ai-generation" as const;
 
 export interface AiGenerationWorkflowTarget {
@@ -116,6 +122,13 @@ export const AI_GENERATION_WORKFLOW_BY_KIND = {
   },
   music: {
     workflowName: GENERATE_AUDIO_WORKFLOW_NAME,
+    queueName: AI_GENERATION_QUEUE_NAME,
+  },
+  // Task #34: video → generateVideo on the ai-generation queue (async video-job workflow).
+  // `video` is openrouter-only (AI_PROVIDERS_BY_KIND.video), enforced at enqueue (422) BEFORE
+  // this routing lookup. This is the LAST kind — the map now covers all six AiGenerationKinds.
+  video: {
+    workflowName: GENERATE_VIDEO_WORKFLOW_NAME,
     queueName: AI_GENERATION_QUEUE_NAME,
   },
 } as const satisfies Partial<Record<AiGenerationKind, AiGenerationWorkflowTarget>>;

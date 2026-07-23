@@ -344,6 +344,45 @@ export const GenerateAudioPayloadSchema = z.object({
 export type GenerateAudioPayload = z.infer<typeof GenerateAudioPayloadSchema>;
 
 // ---------------------------------------------------------------------------
+// Task #34: the `AiGeneration.input` contract for the `video` kind (design-delta §7
+// workflow 8). Replaces the task-31 `MediaGenerationInputSchema` passthrough placeholder
+// (video was the LAST placeholder kind, so that schema is now removed). Named
+// `Generate<Kind>InputSchema` for parity with script/image/narration/music.
+//
+// DOMAIN shape is camelCase (like `durationSeconds`/`aspectRatio` elsewhere); the
+// generateVideo workflow's pure `buildVideoSubmitInput` maps these to OpenRouter's
+// snake_case body (`duration`/`aspect_ratio`/`frame_images`/`generate_audio`) at the wire
+// boundary — mirroring how generateAudio's `buildSpeechArgs` maps the narration/music spec.
+// `.passthrough()` (image/audio/script forward-compat discipline) lets a future richer
+// contract add fields without breaking the workflow. Only `prompt` is required (design lists
+// `model` + `prompt` as core, the rest as optional); the rest are optional so a caller sends
+// exactly what the chosen video model needs.
+// ---------------------------------------------------------------------------
+
+/** The `AiGeneration.input` for the `video` kind: the generation `prompt` plus optional
+ *  clip parameters. `frameImages` carries source frames for image-to-video (asset keys or
+ *  URLs); `aspectRatio` reuses the `"W:H"` hint pattern; `resolution` is a free string. */
+export const GenerateVideoInputSchema = z
+  .object({
+    prompt: z.string().min(1),
+    durationSeconds: z.number().positive().optional(),
+    resolution: z.string().min(1).optional(),
+    aspectRatio: aspectRatio.optional(),
+    frameImages: z.array(z.string().min(1)).min(1).optional(),
+    generateAudio: z.boolean().optional(),
+    seed: z.number().int().optional(),
+  })
+  .passthrough();
+export type GenerateVideoInput = z.infer<typeof GenerateVideoInputSchema>;
+
+/** The DBOS enqueue payload for `generateVideo`. Same `{generationId}` echo as the other
+ *  generation workflows — everything else is read off the `AiGeneration` row. */
+export const GenerateVideoPayloadSchema = z.object({
+  generationId: z.string().min(1),
+});
+export type GenerateVideoPayload = z.infer<typeof GenerateVideoPayloadSchema>;
+
+// ---------------------------------------------------------------------------
 // RenderOutputSpecSchema — resolution / aspect / fps / codec
 // ---------------------------------------------------------------------------
 
@@ -1110,17 +1149,10 @@ export type ManifestResponse = z.infer<typeof ManifestResponseSchema>;
 // malformed input) with no service branching. The kind->provider COMPATIBILITY matrix
 // (`AI_PROVIDERS_BY_KIND` in ./workflows) is a SEMANTIC check enforced by the service
 // (→ 422), deliberately NOT folded into this union, so the two gates keep distinct
-// status codes. `storyboard`/`script` carry the real `GenerateScriptInputSchema`; the
-// media kinds carry a permissive passthrough placeholder until #32–34 design their real
-// input contracts (the POST 501s those kinds before their `input` is ever consumed).
+// status codes. Every kind now carries its REAL input schema (`GenerateScriptInputSchema`
+// for the text kinds; `GenerateImage/Narration/Music/VideoInputSchema` for the media kinds,
+// wired in #32–34) — there is no longer a passthrough placeholder member.
 // ===========================================================================
-
-/** Placeholder input for the still-not-built `video` kind. Accepts any object; the real
- *  `video` contract lands with its workflow (#34). Today the POST rejects `video` with 501
- *  before this input is consumed. (Tasks #32/#33 gave `image`/`narration`/`music` their real
- *  input schemas — they are no longer placeholder kinds.) */
-export const MediaGenerationInputSchema = z.object({}).passthrough();
-export type MediaGenerationInput = z.infer<typeof MediaGenerationInputSchema>;
 
 // Fields shared by every create-generation variant (spread into each union member so
 // the discriminant `kind` + its per-kind `input` stay explicit). `projectId`/`sceneId`
@@ -1134,8 +1166,9 @@ const aiGenerationCreateBase = {
 
 /** `POST /v1/ai/generations` request body (design-delta §8, sequence diagram (b):
  *  `{kind, provider, model, projectId, sceneId, input}`). Discriminated on `kind` so the
- *  kind-specific `input` is validated at the wire boundary. Text kinds → the real
- *  `GenerateScriptInputSchema`; media kinds → the passthrough placeholder. */
+ *  kind-specific `input` is validated at the wire boundary. Each kind carries its own real
+ *  input schema (text → `GenerateScriptInputSchema`; image/narration/music/video → their
+ *  `Generate<Kind>InputSchema`). */
 export const CreateAiGenerationRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("storyboard"),
@@ -1168,7 +1201,8 @@ export const CreateAiGenerationRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("video"),
     ...aiGenerationCreateBase,
-    input: MediaGenerationInputSchema,
+    // Task #34: the `video` kind now carries its REAL input contract (requires a prompt).
+    input: GenerateVideoInputSchema,
   }),
 ]);
 export type CreateAiGenerationRequest = z.infer<
