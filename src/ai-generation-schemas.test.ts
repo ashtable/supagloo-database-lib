@@ -11,7 +11,8 @@ import {
   GenerateImageInputSchema,
   GenerateMusicInputSchema,
   GenerateNarrationInputSchema,
-  MediaGenerationInputSchema,
+  GenerateVideoInputSchema,
+  GenerateVideoPayloadSchema,
 } from "./schemas";
 
 // Task #31: the four-endpoint wire DTOs (design-delta §2.8/§8). The create request is a
@@ -54,14 +55,32 @@ describe("Task #31 CreateAiGenerationRequestSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("accepts a still-placeholder media kind (video) with arbitrary passthrough input (contract deferred to #34)", () => {
-    const parsed = CreateAiGenerationRequestSchema.safeParse({
-      kind: "video",
-      provider: "openrouter",
-      model: "some/video-model",
-      input: { anything: "goes", nested: { ok: true } },
-    });
-    expect(parsed.success).toBe(true);
+  it("requires a real video spec (a prompt) now that video is wired (Task #34)", () => {
+    // A prompt (+ optional passthrough fields) is accepted.
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "video",
+        provider: "openrouter",
+        model: "some/video-model",
+        projectId: "proj_1",
+        input: {
+          prompt: "a dove descends over still water",
+          durationSeconds: 6,
+          aspectRatio: "9:16",
+          generateAudio: true,
+          extra: "tolerated by passthrough",
+        },
+      }).success,
+    ).toBe(true);
+    // Empty input is no longer accepted (was the passthrough placeholder pre-#34).
+    expect(
+      CreateAiGenerationRequestSchema.safeParse({
+        kind: "video",
+        provider: "openrouter",
+        model: "some/video-model",
+        input: {},
+      }).success,
+    ).toBe(false);
   });
 
   it("requires a real narration spec (voice + at least one scene) now that narration is wired (Task #33)", () => {
@@ -151,6 +170,13 @@ describe("Task #31 CreateAiGenerationRequestSchema", () => {
     expect(GenerateAudioPayloadSchema.safeParse({ generationId: "" }).success).toBe(false);
   });
 
+  it("GenerateVideoPayloadSchema is the { generationId } enqueue echo (Task #34)", () => {
+    expect(GenerateVideoPayloadSchema.parse({ generationId: "gen_1" })).toEqual({
+      generationId: "gen_1",
+    });
+    expect(GenerateVideoPayloadSchema.safeParse({ generationId: "" }).success).toBe(false);
+  });
+
   it("requires a prompt for the image kind now that it has a real input schema (Task #32)", () => {
     expect(
       CreateAiGenerationRequestSchema.safeParse({
@@ -234,6 +260,53 @@ describe("Task #32 GenerateImageInputSchema — the real image input", () => {
   });
 });
 
+describe("Task #34 GenerateVideoInputSchema — the real video input", () => {
+  it("accepts a bare prompt (the only required field)", () => {
+    expect(GenerateVideoInputSchema.parse({ prompt: "a dove descends" })).toMatchObject({
+      prompt: "a dove descends",
+    });
+  });
+
+  it("accepts all optional fields (duration/resolution/aspect/frameImages/audio/seed)", () => {
+    const parsed = GenerateVideoInputSchema.parse({
+      prompt: "a dove descends over still water",
+      durationSeconds: 6,
+      resolution: "1280x720",
+      aspectRatio: "9:16",
+      frameImages: ["projects/p/assets/a"],
+      generateAudio: true,
+      seed: 42,
+    });
+    expect(parsed.durationSeconds).toBe(6);
+    expect(parsed.aspectRatio).toBe("9:16");
+    expect(parsed.frameImages).toEqual(["projects/p/assets/a"]);
+    expect(parsed.generateAudio).toBe(true);
+    expect(parsed.seed).toBe(42);
+  });
+
+  it("rejects a missing or empty prompt", () => {
+    expect(GenerateVideoInputSchema.safeParse({}).success).toBe(false);
+    expect(GenerateVideoInputSchema.safeParse({ prompt: "" }).success).toBe(false);
+  });
+
+  it("rejects a malformed aspect ratio, empty frameImages, and non-positive duration", () => {
+    expect(
+      GenerateVideoInputSchema.safeParse({ prompt: "x", aspectRatio: "16x9" }).success,
+    ).toBe(false);
+    expect(
+      GenerateVideoInputSchema.safeParse({ prompt: "x", frameImages: [] }).success,
+    ).toBe(false);
+    expect(
+      GenerateVideoInputSchema.safeParse({ prompt: "x", durationSeconds: 0 }).success,
+    ).toBe(false);
+  });
+
+  it("tolerates extra keys (passthrough forward-compat)", () => {
+    const parsed = GenerateVideoInputSchema.parse({ prompt: "x", cameraMotion: "pan" });
+    expect((parsed as Record<string, unknown>).cameraMotion).toBe("pan");
+  });
+});
+
 describe("Task #31 AiGenerationDtoSchema", () => {
   it("round-trips a full DTO incl. arbitrary resultJson + tokenUsage", () => {
     const dto = {
@@ -314,11 +387,6 @@ describe("Task #31 response / list / param schemas", () => {
     expect(AiGenerationIdParamSchema.safeParse({ id: "x" }).success).toBe(true);
     expect(AiGenerationIdParamSchema.safeParse({ id: "" }).success).toBe(false);
   });
-
-  it("MediaGenerationInputSchema is a passthrough object", () => {
-    expect(MediaGenerationInputSchema.parse({ a: 1 })).toEqual({ a: 1 });
-    expect(MediaGenerationInputSchema.safeParse("nope").success).toBe(false);
-  });
 });
 
 describe("Task #31 schemas are re-exported from the barrel", () => {
@@ -335,7 +403,7 @@ describe("Task #31 schemas are re-exported from the barrel", () => {
       CreateAiGenerationResponseSchema,
     );
     expect(DbLib.AiGenerationIdParamSchema).toBe(AiGenerationIdParamSchema);
-    expect(DbLib.MediaGenerationInputSchema).toBe(MediaGenerationInputSchema);
     expect(DbLib.GenerateImageInputSchema).toBe(GenerateImageInputSchema);
+    expect(DbLib.GenerateVideoInputSchema).toBe(GenerateVideoInputSchema);
   });
 });

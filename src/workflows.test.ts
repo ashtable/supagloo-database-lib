@@ -7,6 +7,7 @@ import {
   GENERATE_AUDIO_WORKFLOW_NAME,
   GENERATE_IMAGE_WORKFLOW_NAME,
   GENERATE_SCRIPT_WORKFLOW_NAME,
+  GENERATE_VIDEO_WORKFLOW_NAME,
   GIT_OPS_QUEUE_NAME,
   GIT_OPS_WORKFLOW_BY_KIND,
   IMPORT_PROJECT_WORKFLOW_NAME,
@@ -101,14 +102,32 @@ describe("Task #30 workflows — generateScript name + ai-generation queue", () 
     });
   });
 
-  it("covers the text kinds + image + audio now wired (only video lands in #34)", () => {
+  it("covers ALL six AI-generation kinds now wired (video was the last, #34)", () => {
     expect(Object.keys(AI_GENERATION_WORKFLOW_BY_KIND).sort()).toEqual([
       "image",
       "music",
       "narration",
       "script",
       "storyboard",
+      "video",
     ]);
+  });
+});
+
+describe("Task #34 workflows — generateVideo name + video routing", () => {
+  it("pins the generate-video workflow name", () => {
+    expect(GENERATE_VIDEO_WORKFLOW_NAME).toBe("generateVideo");
+  });
+
+  it("routes the video kind to generateVideo on the ai-generation queue", () => {
+    expect(AI_GENERATION_WORKFLOW_BY_KIND.video).toEqual({
+      workflowName: GENERATE_VIDEO_WORKFLOW_NAME,
+      queueName: AI_GENERATION_QUEUE_NAME,
+    });
+  });
+
+  it("re-exports the generate-video name from the barrel", () => {
+    expect(DbLib.GENERATE_VIDEO_WORKFLOW_NAME).toBe("generateVideo");
   });
 });
 
