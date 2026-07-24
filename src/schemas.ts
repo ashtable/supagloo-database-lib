@@ -117,10 +117,18 @@ export type CompositionSpec = z.infer<typeof CompositionSpecSchema>;
 
 /** Narrator voice descriptor: a freeform `description` (required) + an optional
  *  punchy `label` (e.g. "JAMES EARL JONES-STYLE"). Reused by the manifest's
- *  project-scoped narrator voice and by NarrationSpec's synthesis input. */
+ *  project-scoped narrator voice and by NarrationSpec's synthesis input.
+ *
+ *  Task #35: `assetKey` caches the WHOLE-PROJECT synthesized narration track
+ *  (absent/null until generated) — narration is one asset for all scenes'
+ *  narration concatenated (§7 workflow 7, decision D5), so it lives here on the
+ *  project-scoped voice rather than per scene. Mirrors `MusicBed.assetKey`. Being
+ *  optional keeps `GeneratedStoryboardSchema`/`NarrationSpecSchema` (which reuse
+ *  this schema) unaffected — the LLM/synth inputs simply omit it. */
 export const VoiceDescriptorSchema = z.object({
   description: z.string().min(1),
   label: z.string().min(1).optional(),
+  assetKey: z.string().min(1).nullable().optional(),
 });
 export type VoiceDescriptor = z.infer<typeof VoiceDescriptorSchema>;
 

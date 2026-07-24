@@ -266,6 +266,59 @@ describe("Task #7 schemas — ProjectManifestSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// B2. VoiceDescriptorSchema.assetKey (Task #35 — whole-project narration asset)
+// ---------------------------------------------------------------------------
+
+describe("Task #35 schema — VoiceDescriptorSchema.assetKey", () => {
+  it("accepts the whole-project narration assetKey (string, null, or omitted)", () => {
+    expect(
+      S.VoiceDescriptorSchema.safeParse({ description: "warm baritone" }).success,
+    ).toBe(true);
+    expect(
+      S.VoiceDescriptorSchema.safeParse({
+        description: "warm baritone",
+        label: "JEJ",
+      }).success,
+    ).toBe(true);
+    expect(
+      S.VoiceDescriptorSchema.safeParse({
+        description: "warm baritone",
+        label: "JEJ",
+        assetKey: "projects/x/narration/track.mp3",
+      }).success,
+    ).toBe(true);
+    expect(
+      S.VoiceDescriptorSchema.safeParse({
+        description: "warm baritone",
+        assetKey: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an empty-string assetKey (mirrors MusicBed.assetKey min(1))", () => {
+    expect(
+      S.VoiceDescriptorSchema.safeParse({
+        description: "warm baritone",
+        assetKey: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("round-trips a manifest whose narratorVoice carries an assetKey", () => {
+    const withNarration = {
+      ...validManifest,
+      narratorVoice: {
+        ...validManifest.narratorVoice,
+        assetKey: "projects/x/narration/track.mp3",
+      },
+    };
+    const res = S.ProjectManifestSchema.safeParse(withNarration);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    if (res.success) expect(res.data).toEqual(withNarration);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // C. GeneratedStoryboardSchema
 // ---------------------------------------------------------------------------
 
