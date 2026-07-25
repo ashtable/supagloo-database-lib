@@ -460,6 +460,134 @@ describe("Task #36 schemas — RenderWorkflowPayloadSchema (the render enqueue c
 });
 
 // ---------------------------------------------------------------------------
+// G2. Task #37 — render WIRE DTOs (design-delta §2.7/§2.11/§6c/§8)
+// ---------------------------------------------------------------------------
+
+const validRenderJobDto = {
+  id: "rj_1",
+  projectId: "prj_1",
+  versionId: "pv_1",
+  status: "encoding",
+  framesDone: 612,
+  framesTotal: 840,
+  outputSpec: validRenderSpec,
+  outputAssetKey: null,
+  thumbnailAssetKey: null,
+  runInBackground: false,
+  error: null,
+  createdAt: "2026-07-24T10:00:00.000Z",
+  startedAt: "2026-07-24T10:00:01.000Z",
+  completedAt: null,
+};
+
+describe("Task #37 schemas — CreateRenderRequestSchema", () => {
+  it("parses { versionId, outputSpec, runInBackground }", () => {
+    const parsed = S.CreateRenderRequestSchema.parse({
+      versionId: "pv_1",
+      outputSpec: validRenderSpec,
+      runInBackground: true,
+    });
+    expect(parsed.versionId).toBe("pv_1");
+    expect(parsed.outputSpec).toEqual(validRenderSpec);
+    expect(parsed.runInBackground).toBe(true);
+  });
+
+  it("defaults runInBackground to false when omitted (the column is non-nullable)", () => {
+    const parsed = S.CreateRenderRequestSchema.parse({
+      versionId: "pv_1",
+      outputSpec: validRenderSpec,
+    });
+    expect(parsed.runInBackground).toBe(false);
+  });
+
+  it("rejects a missing/empty versionId", () => {
+    expect(
+      S.CreateRenderRequestSchema.safeParse({ outputSpec: validRenderSpec }).success,
+    ).toBe(false);
+    expect(
+      S.CreateRenderRequestSchema.safeParse({
+        versionId: "",
+        outputSpec: validRenderSpec,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("delegates spec validation to RenderOutputSpecSchema (bad aspect / non-int fps / no codec)", () => {
+    const bad = (outputSpec: unknown) =>
+      S.CreateRenderRequestSchema.safeParse({ versionId: "pv_1", outputSpec })
+        .success;
+    expect(bad({ ...validRenderSpec, aspectRatio: "9-16" })).toBe(false);
+    expect(bad({ ...validRenderSpec, fps: 29.97 })).toBe(false);
+    const { codec: _c, ...noCodec } = validRenderSpec;
+    expect(bad(noCodec)).toBe(false);
+    expect(bad(undefined)).toBe(false);
+  });
+});
+
+describe("Task #37 schemas — render response DTOs", () => {
+  it("CreateRenderResponseSchema returns ids only (the create-response convention)", () => {
+    const parsed = S.CreateRenderResponseSchema.parse({ renderJobId: "rj_1" });
+    expect(Object.keys(parsed)).toEqual(["renderJobId"]);
+  });
+
+  it("RenderJobDtoSchema parses a full row projection with the spec re-nested", () => {
+    const parsed = S.RenderJobDtoSchema.parse(validRenderJobDto);
+    expect(parsed.outputSpec).toEqual(validRenderSpec);
+    expect(parsed.status).toBe("encoding");
+    expect(parsed.completedAt).toBeNull();
+  });
+
+  it("RenderJobDtoSchema omits userId (the caller is the owner — connection-DTO precedent)", () => {
+    const parsed = S.RenderJobDtoSchema.parse({
+      ...validRenderJobDto,
+      userId: "usr_leak",
+    }) as Record<string, unknown>;
+    expect("userId" in parsed).toBe(false);
+  });
+
+  it("RenderJobDtoSchema rejects an unknown status and a non-integer frame count", () => {
+    expect(
+      S.RenderJobDtoSchema.safeParse({ ...validRenderJobDto, status: "rendering" })
+        .success,
+    ).toBe(false);
+    expect(
+      S.RenderJobDtoSchema.safeParse({ ...validRenderJobDto, framesDone: 1.5 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("single + list responses are KEYED envelopes, never bare rows/arrays", () => {
+    expect(
+      S.RenderJobResponseSchema.safeParse({ render: validRenderJobDto }).success,
+    ).toBe(true);
+    expect(S.RenderJobResponseSchema.safeParse(validRenderJobDto).success).toBe(
+      false,
+    );
+    expect(
+      S.RenderJobListResponseSchema.safeParse({ renders: [validRenderJobDto] })
+        .success,
+    ).toBe(true);
+    expect(S.RenderJobListResponseSchema.safeParse([validRenderJobDto]).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("Task #37 schemas — RenderIdParamSchema / RenderListQuerySchema", () => {
+  it("RenderIdParamSchema requires a non-empty id", () => {
+    expect(S.RenderIdParamSchema.safeParse({ id: "rj_1" }).success).toBe(true);
+    expect(S.RenderIdParamSchema.safeParse({ id: "" }).success).toBe(false);
+  });
+
+  it("RenderListQuerySchema requires the literal mine=1 (there is no cross-user listing)", () => {
+    expect(S.RenderListQuerySchema.safeParse({ mine: "1" }).success).toBe(true);
+    expect(S.RenderListQuerySchema.safeParse({}).success).toBe(false);
+    expect(S.RenderListQuerySchema.safeParse({ mine: "0" }).success).toBe(false);
+    expect(S.RenderListQuerySchema.safeParse({ mine: "true" }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // H. Barrel exports + no Prisma collision
 // ---------------------------------------------------------------------------
 
@@ -484,6 +612,14 @@ describe("Task #7 schemas — barrel exports", () => {
     "CompositionSpecSchema",
     "VoiceDescriptorSchema",
     "RenderWorkflowPayloadSchema",
+    // Task #37 — render wire DTOs
+    "CreateRenderRequestSchema",
+    "CreateRenderResponseSchema",
+    "RenderJobDtoSchema",
+    "RenderJobResponseSchema",
+    "RenderJobListResponseSchema",
+    "RenderIdParamSchema",
+    "RenderListQuerySchema",
   ] as const;
 
   it("re-exports every schema from the package entry as a usable Zod schema", () => {
