@@ -437,6 +437,40 @@ describe("Task #7 schemas — RenderOutputSpecSchema (CompositionSpec + codec)",
 });
 
 // ---------------------------------------------------------------------------
+// Task #36: the renderWorkflow DBOS enqueue payload (design-delta §6c / §7 workflow 9).
+// Same minimal-echo shape as the generate-* payloads — everything else the workflow
+// needs (project, version, output spec, userId) is read off the RenderJob row, whose
+// id IS the DBOS workflow id.
+// ---------------------------------------------------------------------------
+
+describe("Task #36 schemas — RenderVideoPayloadSchema", () => {
+  it("is the { renderJobId } enqueue echo", () => {
+    expect(S.RenderVideoPayloadSchema.parse({ renderJobId: "render_1" })).toEqual({
+      renderJobId: "render_1",
+    });
+  });
+
+  it("rejects a missing or empty renderJobId", () => {
+    expect(S.RenderVideoPayloadSchema.safeParse({}).success).toBe(false);
+    expect(S.RenderVideoPayloadSchema.safeParse({ renderJobId: "" }).success).toBe(
+      false,
+    );
+  });
+
+  it("strips unknown keys (parity with the other enqueue payload schemas)", () => {
+    expect(
+      S.RenderVideoPayloadSchema.parse({ renderJobId: "r1", versionId: "v1" }),
+    ).toEqual({ renderJobId: "r1" });
+  });
+
+  it("is re-exported from the barrel", () => {
+    expect(DbLib.RenderVideoPayloadSchema.parse({ renderJobId: "r1" })).toEqual({
+      renderJobId: "r1",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // H. Barrel exports + no Prisma collision
 // ---------------------------------------------------------------------------
 
