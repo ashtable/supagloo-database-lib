@@ -88,6 +88,111 @@ describe("signAppJwt", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Private-key newline normalization — regression tests for a production bug
+// found 2026-07-25.
+//
+// `supagloo/.env.example` documents GITHUB_APP_PRIVATE_KEY as the PEM on a
+// SINGLE LINE with escaped `\n`, "normalized to real newlines before signing".
+// Nothing normalized it here, so a key in the documented format reached OpenSSL
+// as one unbroken line and threw `ERR_OSSL_UNSUPPORTED`
+// (`error:1E08010C:DECODER routines::unsupported`) — breaking every
+// GitHub-App-authenticated path. Most acutely DBOS: all of its git-ops
+// workflows pass `env.GITHUB_APP_PRIVATE_KEY` straight into
+// `mintInstallationToken`, so `scaffoldProjectWorkflow` died after exhausting
+// its retries.
+//
+// The escaped and real-newline forms are BOTH live in this system, so the
+// normalization has to be faithful in both directions — hence the
+// identical-signature test below, not merely "it didn't throw".
+// ---------------------------------------------------------------------------
+
+/** The same key as PRIVATE_KEY, in the single-line escaped-`\n` env format. */
+const ESCAPED_PRIVATE_KEY = PRIVATE_KEY.replace(/\n/g, "\\n");
+
+function verifyJwt(jwt: string): boolean {
+  const { signingInput, signature } = decodeJwt(jwt);
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(signingInput);
+  return verifier.verify(PUBLIC_KEY, signature);
+}
+
+describe("signAppJwt private-key newline normalization", () => {
+  it("signs a PEM in the documented single-line escaped-\\n form, and the signature VERIFIES", () => {
+    // Guard the fixture itself: this really is one unbroken line.
+    expect(ESCAPED_PRIVATE_KEY).not.toContain("\n");
+    expect(ESCAPED_PRIVATE_KEY).toContain("\\n");
+
+    const jwt = signAppJwt({
+      appId: APP_ID,
+      privateKey: ESCAPED_PRIVATE_KEY,
+      now: NOW,
+    });
+
+    expect(verifyJwt(jwt)).toBe(true);
+  });
+
+  it("still signs a PEM that already has REAL newlines (pass-through regression guard)", () => {
+    // This form is live too — every other unit test here, and the api service's
+    // container env, supply a real multi-line PEM. Normalization must not
+    // double-transform or corrupt it.
+    const jwt = signAppJwt({ appId: APP_ID, privateKey: PRIVATE_KEY, now: NOW });
+
+    expect(verifyJwt(jwt)).toBe(true);
+  });
+
+  it("produces an IDENTICAL signature from both forms of the same key", () => {
+    const fromEscaped = signAppJwt({
+      appId: APP_ID,
+      privateKey: ESCAPED_PRIVATE_KEY,
+      now: NOW,
+    });
+    const fromReal = signAppJwt({
+      appId: APP_ID,
+      privateKey: PRIVATE_KEY,
+      now: NOW,
+    });
+
+    // Same claims ⇒ same signing input, and RS256 (PKCS#1 v1.5) is
+    // deterministic — so a faithful, lossless normalization must yield the very
+    // same JWT. This is what proves the two forms are the SAME key, rather than
+    // both merely happening to parse.
+    expect(fromEscaped).toBe(fromReal);
+    expect(verifyJwt(fromEscaped)).toBe(true);
+  });
+
+  it("tolerates the escaped-CRLF (\\r\\n) form without leaving a stray \\r", () => {
+    const escapedCrlf = PRIVATE_KEY.trimEnd().replace(/\n/g, "\\r\\n");
+    expect(escapedCrlf).not.toContain("\n");
+
+    const jwt = signAppJwt({
+      appId: APP_ID,
+      privateKey: escapedCrlf,
+      now: NOW,
+    });
+
+    expect(verifyJwt(jwt)).toBe(true);
+  });
+
+  it("tolerates stray surrounding whitespace and extra trailing newlines", () => {
+    const messy = `  \n${ESCAPED_PRIVATE_KEY}\\n\n  `;
+
+    const jwt = signAppJwt({ appId: APP_ID, privateKey: messy, now: NOW });
+
+    expect(verifyJwt(jwt)).toBe(true);
+    // Still the same key — whitespace tolerance must not change the signature.
+    expect(jwt).toBe(
+      signAppJwt({ appId: APP_ID, privateKey: PRIVATE_KEY, now: NOW }),
+    );
+  });
+
+  it("still rejects a genuinely malformed key instead of silently 'fixing' it", () => {
+    expect(() =>
+      signAppJwt({ appId: APP_ID, privateKey: "not-a-pem-at-all", now: NOW }),
+    ).toThrow();
+  });
+});
+
 describe("mintInstallationToken", () => {
   const OK = {
     token: "ghs_stub_inst_42_1",
@@ -149,6 +254,31 @@ describe("mintInstallationToken", () => {
     const b = await mintInstallationToken(args);
     expect(n).toBe(2); // one exchange per call — nothing cached
     expect(a.token).not.toBe(b.token);
+  });
+
+  it("exchanges with a single-line escaped-\\n PEM — the exact DBOS failure path", async () => {
+    // Every dbos git-ops workflow passes `env.GITHUB_APP_PRIVATE_KEY` (the
+    // documented escaped form) straight into this function. Before
+    // normalization this threw ERR_OSSL_UNSUPPORTED inside signAppJwt, so the
+    // exchange never even reached the network and DBOS burned all 4 retries.
+    const seen: string[] = [];
+    const result = await mintInstallationToken({
+      appId: APP_ID,
+      privateKey: ESCAPED_PRIVATE_KEY,
+      installationId: "42",
+      apiBaseUrl: "https://api.github.com",
+      now: NOW,
+      fetchImpl: fakeFetch((_url, init) => {
+        const auth = new Headers(init?.headers).get("authorization") ?? "";
+        seen.push(auth.slice("Bearer ".length));
+        return new Response(JSON.stringify(OK), { status: 201 });
+      }),
+    });
+
+    expect(result.token).toBe("ghs_stub_inst_42_1");
+    // The App JWT it sent is genuinely signed by that key.
+    expect(seen).toHaveLength(1);
+    expect(verifyJwt(seen[0])).toBe(true);
   });
 
   it("throws GithubAppError on a 401/404 exchange (JWT not leaked in message)", async () => {

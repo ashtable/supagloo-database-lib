@@ -44,7 +44,11 @@ export class GithubAppError extends Error {
 export interface SignAppJwtOptions {
   /** The GitHub App's numeric ID (issuer claim). */
   appId: string;
-  /** The App's RSA private key (PKCS#1 or PKCS#8 PEM). */
+  /**
+   * The App's RSA private key (PKCS#1 or PKCS#8 PEM). Accepts either real
+   * newlines or the documented single-line escaped-`\n` env format — see
+   * {@link normalizePemNewlines}.
+   */
   privateKey: string;
   /** Injectable clock for deterministic tests; defaults to wall-clock. */
   now?: Date;
@@ -56,6 +60,49 @@ export interface SignAppJwtOptions {
 
 const base64url = (obj: unknown): string =>
   Buffer.from(JSON.stringify(obj)).toString("base64url");
+
+/**
+ * Restore a PEM whose newlines were escaped to the literal two characters
+ * `\` + `n`, so OpenSSL can actually decode it.
+ *
+ * **Why this exists.** `supagloo/.env.example` defines the deployment contract
+ * for `GITHUB_APP_PRIVATE_KEY`:
+ *
+ * > The private key is the app's PKCS#1/PKCS#8 PEM as a **SINGLE LINE with
+ * > escaped `\n`** (**normalized to real newlines before signing**) — e.g.
+ * > `-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n`
+ *
+ * Nothing honoured the "normalized to real newlines before signing" half of
+ * that contract: the raw single-line string went straight to
+ * `createSign(...).sign()`, which threw
+ * `error:1E08010C:DECODER routines::unsupported` (`ERR_OSSL_UNSUPPORTED`) — so
+ * a key in the *documented* format broke every GitHub-App-authenticated path
+ * (the API's connection verify/install flows, and every DBOS git-ops workflow,
+ * which passes `env.GITHUB_APP_PRIVATE_KEY` straight into
+ * {@link mintInstallationToken}). Fixed 2026-07-25.
+ *
+ * This is deliberately the ONE choke point — both consumers reach GitHub
+ * through {@link signAppJwt} — rather than duplicated in each service's env
+ * loader, which is how it silently went missing in the first place.
+ *
+ * Both key formats are live in this system, so normalization must be faithful
+ * in **both** directions: a PEM that already contains real newlines is returned
+ * byte-identical (the escape replacement is simply a no-op on it), so this can
+ * be applied unconditionally and can never double-transform a good key.
+ */
+export function normalizePemNewlines(privateKey: string): string {
+  return (
+    privateKey
+      // Escaped CRLF first, so `\r\n` doesn't leave a stray literal `\r` behind.
+      .replace(/\\r\\n|\\n/g, "\n")
+      // A genuinely CRLF-delimited PEM decodes fine, but folding it to LF keeps
+      // the escaped and real forms byte-identical (and thus signature-identical).
+      .replace(/\r\n/g, "\n")
+      // Stray whitespace picked up from env plumbing / shell quoting. Node
+      // accepts a PEM with no trailing newline, so trimming is safe.
+      .trim()
+  );
+}
 
 /**
  * Sign a short-lived **App JWT** (RS256). Claims follow GitHub's documented
@@ -73,7 +120,11 @@ export function signAppJwt(opts: SignAppJwtOptions): string {
 
   const signer = createSign("RSA-SHA256");
   signer.update(signingInput);
-  const signature = signer.sign(opts.privateKey).toString("base64url");
+  // See {@link normalizePemNewlines}: the documented env format is a SINGLE
+  // LINE with escaped `\n`, which OpenSSL cannot decode as-is.
+  const signature = signer
+    .sign(normalizePemNewlines(opts.privateKey))
+    .toString("base64url");
 
   return `${signingInput}.${signature}`;
 }
