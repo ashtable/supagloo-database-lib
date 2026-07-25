@@ -167,3 +167,34 @@ export function isProviderCompatible(
     provider,
   );
 }
+
+/**
+ * The `render` workflow's routing constants (design-delta §6c / §7 workflow 9).
+ *
+ * Unlike the git-ops and ai-generation tables above, there is no kind→target MAP here:
+ * `renderWorkflow` is the ONLY workflow on the dedicated `render` queue, and a render
+ * request has no "kind" to dispatch on — the RenderJob row carries everything (project,
+ * version, output spec). So the whole routing contract is one target object.
+ *
+ * The queue is deliberately its own, at `workerConcurrency: 1` in the dbos registry:
+ * Remotion drives a headless Chromium plus an FFmpeg encode, which is far too heavy to
+ * share a worker slot with the light git-ops/ai-generation work (§9-Q8; real sizing
+ * validation is deferred to the load-testing task 45).
+ *
+ * Same shared-constant discipline as everything else in this file: the dbos static
+ * registry (task 36) and the API's render-enqueue path (task 37) import these SAME
+ * values, so the worker and the enqueuer can never disagree on a name or a queue.
+ */
+export const RENDER_WORKFLOW_NAME = "render" as const;
+export const RENDER_QUEUE_NAME = "render" as const;
+
+export interface RenderWorkflowTarget {
+  workflowName: string;
+  queueName: string;
+}
+
+/** The single enqueue target for a render (`DBOSClient.enqueue`, `workflowID = renderJobId`). */
+export const RENDER_WORKFLOW_TARGET = {
+  workflowName: RENDER_WORKFLOW_NAME,
+  queueName: RENDER_QUEUE_NAME,
+} as const satisfies RenderWorkflowTarget;

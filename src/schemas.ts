@@ -403,6 +403,19 @@ export const RenderOutputSpecSchema = CompositionSpecSchema.extend({
 });
 export type RenderOutputSpec = z.infer<typeof RenderOutputSpecSchema>;
 
+/**
+ * The DBOS enqueue payload for `renderWorkflow` (task #36). Same single-id echo as the
+ * generation workflows (`{generationId}`) and the git-ops ones (`{jobId}`-shaped): the
+ * `workflowID` IS the RenderJob id, and everything the workflow needs — project, version
+ * branch, user, output spec — is read off the `RenderJob` row (and its Project/
+ * ProjectVersion relations) inside the first step. Carrying only the id keeps the enqueue
+ * contract impossible to desynchronize from the row.
+ */
+export const RenderWorkflowPayloadSchema = z.object({
+  renderJobId: z.string().min(1),
+});
+export type RenderWorkflowPayload = z.infer<typeof RenderWorkflowPayloadSchema>;
+
 // ===========================================================================
 // Auth / session WIRE DTOs (Task #10 — design-delta §2.1/§2.2/§6a/§8)
 // ---------------------------------------------------------------------------

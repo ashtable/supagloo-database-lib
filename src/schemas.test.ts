@@ -436,6 +436,29 @@ describe("Task #7 schemas — RenderOutputSpecSchema (CompositionSpec + codec)",
   });
 });
 
+describe("Task #36 schemas — RenderWorkflowPayloadSchema (the render enqueue contract)", () => {
+  it("parses the { renderJobId } echo payload", () => {
+    expect(
+      S.RenderWorkflowPayloadSchema.safeParse({ renderJobId: "rj_123" }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a missing, empty, or non-string renderJobId", () => {
+    expect(S.RenderWorkflowPayloadSchema.safeParse({}).success).toBe(false);
+    expect(
+      S.RenderWorkflowPayloadSchema.safeParse({ renderJobId: "" }).success,
+    ).toBe(false);
+    expect(
+      S.RenderWorkflowPayloadSchema.safeParse({ renderJobId: 7 }).success,
+    ).toBe(false);
+  });
+
+  it("mirrors the other workflows' single-id echo convention (everything else is read off the row)", () => {
+    const parsed = S.RenderWorkflowPayloadSchema.parse({ renderJobId: "rj_123" });
+    expect(Object.keys(parsed)).toEqual(["renderJobId"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // H. Barrel exports + no Prisma collision
 // ---------------------------------------------------------------------------
@@ -460,6 +483,7 @@ describe("Task #7 schemas — barrel exports", () => {
     "RenderOutputSpecSchema",
     "CompositionSpecSchema",
     "VoiceDescriptorSchema",
+    "RenderWorkflowPayloadSchema",
   ] as const;
 
   it("re-exports every schema from the package entry as a usable Zod schema", () => {
