@@ -1285,3 +1285,100 @@ export const AiGenerationIdParamSchema = z.object({
   id: z.string().min(1),
 });
 export type AiGenerationIdParam = z.infer<typeof AiGenerationIdParamSchema>;
+
+// ===========================================================================
+// Render WIRE DTOs (Task #37 — design-delta §2.7/§2.11/§6c/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the five render endpoints:
+//   POST /v1/projects/:id/renders · GET /v1/renders/:id ·
+//   POST /v1/renders/:id/cancel  · GET /v1/renders?mine=1 ·
+//   GET  /v1/renders/:id/download   (reuses FilePresignDownloadResponseSchema)
+//
+// `RenderJob.id` IS the DBOS workflow id, so the create response is ids-only
+// (`{ renderJobId }`, exactly the §6c sequence) and the client polls `GET /:id`.
+// The enqueue payload is the already-shipped `RenderWorkflowPayloadSchema`
+// (`{ renderJobId }` — task 36); everything else is read off the row.
+//
+// The five output-spec COLUMNS (width/height/fps/aspectRatio/codec, design §2.7)
+// stay flat in Postgres but are re-nested into a single `outputSpec` on the wire so
+// the request and the response carry the SAME `RenderOutputSpecSchema` object — a
+// spec that validates on the way in always renders on the way out. This is the same
+// no-drift argument task 36 made for validating the row columns with the API's own
+// schema.
+// ===========================================================================
+
+/** `POST /v1/projects/:id/renders` request body (design-delta §6c / §8). The project
+ *  comes from the path; `versionId` is the `ProjectVersion` the worker clones.
+ *  `runInBackground` is a UI hint ONLY (§2.7 — the job is always async server-side) and
+ *  defaults to `false` because the column is non-nullable with no DB default. */
+export const CreateRenderRequestSchema = z.object({
+  versionId: z.string().min(1),
+  outputSpec: RenderOutputSpecSchema,
+  runInBackground: z.boolean().default(false),
+});
+export type CreateRenderRequest = z.infer<typeof CreateRenderRequestSchema>;
+
+/** `POST /v1/projects/:id/renders` response — the new render's id (= the DBOS workflow
+ *  id). Ids-only, mirroring `CreateAiGenerationResponseSchema` / `POST /v1/projects`. */
+export const CreateRenderResponseSchema = z.object({
+  renderJobId: z.string(),
+});
+export type CreateRenderResponse = z.infer<typeof CreateRenderResponseSchema>;
+
+/** A `RenderJob` on the wire (design-delta §2.7) — the poll shape driving the 14c
+ *  overlay. Omits `userId` (the caller is the owner — connection-DTO precedent).
+ *  `outputAssetKey`/`thumbnailAssetKey` are the RAW keys; the client gets a URL from
+ *  `GET /v1/renders/:id/download` (or the generic presign route), so this DTO stays a
+ *  pure row projection with no S3 coupling. Dates are ISO-8601.
+ *
+ *  NOTE for the UI (task 38): `status: "queued"` with a NON-null `startedAt` means the
+ *  worker has already picked the job up and is cloning/installing/downloading assets —
+ *  task 36's `markRenderStarted` deliberately sets `startedAt` without changing status.
+ *  `framesTotal` stays 0 until the worker's `bundleComposition` resolves the composition. */
+export const RenderJobDtoSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  versionId: z.string(),
+  status: RenderStatusSchema,
+  framesDone: z.number().int(),
+  framesTotal: z.number().int(),
+  outputSpec: RenderOutputSpecSchema,
+  outputAssetKey: z.string().nullable(),
+  thumbnailAssetKey: z.string().nullable(),
+  runInBackground: z.boolean(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+export type RenderJobDto = z.infer<typeof RenderJobDtoSchema>;
+
+/** `GET /v1/renders/:id` and `POST /v1/renders/:id/cancel` response. */
+export const RenderJobResponseSchema = z.object({
+  render: RenderJobDtoSchema,
+});
+export type RenderJobResponse = z.infer<typeof RenderJobResponseSchema>;
+
+/** `GET /v1/renders?mine=1` response — the caller's renders, newest first ("Your
+ *  videos", Turn 15 / task 41). Keyed envelope, never a bare array. */
+export const RenderJobListResponseSchema = z.object({
+  renders: z.array(RenderJobDtoSchema),
+});
+export type RenderJobListResponse = z.infer<typeof RenderJobListResponseSchema>;
+
+/** `:id` path param for the render by-id / cancel / download routes (the create route
+ *  reuses `ProjectIdParamSchema`). */
+export const RenderIdParamSchema = z.object({
+  id: z.string().min(1),
+});
+export type RenderIdParam = z.infer<typeof RenderIdParamSchema>;
+
+/** `GET /v1/renders` querystring. `mine` is REQUIRED and must be the literal `"1"`:
+ *  there is no cross-user render listing in v1 (it would leak other users' work), so a
+ *  bare `GET /v1/renders` must fail loudly rather than quietly return the caller's own
+ *  rows under a URL that reads like "all renders". Closed-value query param, following
+ *  `GithubRepoFilterSchema` (an enum, not free text). */
+export const RenderListQuerySchema = z.object({
+  mine: z.literal("1"),
+});
+export type RenderListQuery = z.infer<typeof RenderListQuerySchema>;

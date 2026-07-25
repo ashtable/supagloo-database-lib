@@ -8,11 +8,13 @@
 
 import type {
   CompositionSpec,
+  CreateRenderRequest,
   GeneratedStoryboard,
   ManifestScene,
   MusicSpec,
   NarrationSpec,
   ProjectManifest,
+  RenderJobDto,
   RenderOutputSpec,
   SceneVisualPrompt,
   Translation,
@@ -102,3 +104,32 @@ export const badRender: RenderOutputSpec = {
   aspectRatio: "9:16",
   fps: 30,
 };
+
+// ── Task #37 render wire DTOs ────────────────────────────────────────────────
+
+export const createRender: CreateRenderRequest = {
+  versionId: "pv_1",
+  outputSpec: render,
+  runInBackground: false,
+};
+
+export const renderDto: RenderJobDto = {
+  id: "rj_1",
+  projectId: "prj_1",
+  versionId: "pv_1",
+  status: "encoding",
+  framesDone: 612,
+  framesTotal: 840,
+  outputSpec: render,
+  outputAssetKey: null,
+  thumbnailAssetKey: null,
+  runInBackground: false,
+  error: null,
+  createdAt: "2026-07-24T10:00:00.000Z",
+  startedAt: null,
+  completedAt: null,
+};
+
+// `status` is the closed RenderStatus union, not a free string.
+// @ts-expect-error "rendering" is not a RenderStatus
+export const badRenderDto: RenderJobDto = { ...renderDto, status: "rendering" };
