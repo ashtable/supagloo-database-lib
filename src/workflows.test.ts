@@ -12,6 +12,9 @@ import {
   GIT_OPS_WORKFLOW_BY_KIND,
   IMPORT_PROJECT_WORKFLOW_NAME,
   PUBLISH_VERSION_WORKFLOW_NAME,
+  RENDER_QUEUE_NAME,
+  RENDER_WORKFLOW_NAME,
+  RENDER_WORKFLOW_TARGET,
   SCAFFOLD_PROJECT_WORKFLOW_NAME,
 } from "./workflows";
 
@@ -188,5 +191,37 @@ describe("Task #18/19/21/22 workflows — barrel exports", () => {
     expect(DbLib.GIT_OPS_WORKFLOW_BY_KIND.publish?.workflowName).toBe(
       "publishVersion",
     );
+  });
+});
+
+// Task #36: the render workflow's routing constants + enqueue target. `renderWorkflow`
+// is the ONLY workflow on the dedicated `render` queue (workerConcurrency 1 — Chromium is
+// heavy), so unlike the git-ops / ai-generation tables there is no kind→target MAP: a single
+// `RENDER_WORKFLOW_TARGET` is the whole routing contract. Same shared-constant discipline —
+// the dbos static registry and the API's render-enqueue path (task 37) import these SAME
+// values, so the worker and the enqueuer can never disagree.
+
+describe("Task #36 workflows — render name/queue + enqueue target", () => {
+  it("pins the render workflow name and the render queue name", () => {
+    expect(RENDER_WORKFLOW_NAME).toBe("render");
+    expect(RENDER_QUEUE_NAME).toBe("render");
+  });
+
+  it("exposes a single render enqueue target built from those constants", () => {
+    expect(RENDER_WORKFLOW_TARGET).toEqual({
+      workflowName: RENDER_WORKFLOW_NAME,
+      queueName: RENDER_QUEUE_NAME,
+    });
+  });
+
+  it("keeps the render queue distinct from the git-ops and ai-generation queues", () => {
+    expect(RENDER_QUEUE_NAME).not.toBe(GIT_OPS_QUEUE_NAME);
+    expect(RENDER_QUEUE_NAME).not.toBe(AI_GENERATION_QUEUE_NAME);
+  });
+
+  it("re-exports the render routing constants from the barrel", () => {
+    expect(DbLib.RENDER_WORKFLOW_NAME).toBe("render");
+    expect(DbLib.RENDER_QUEUE_NAME).toBe("render");
+    expect(DbLib.RENDER_WORKFLOW_TARGET.workflowName).toBe("render");
   });
 });
