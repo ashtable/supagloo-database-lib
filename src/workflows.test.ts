@@ -12,9 +12,6 @@ import {
   GIT_OPS_WORKFLOW_BY_KIND,
   IMPORT_PROJECT_WORKFLOW_NAME,
   PUBLISH_VERSION_WORKFLOW_NAME,
-  RENDER_QUEUE_NAME,
-  RENDER_WORKFLOW_NAME,
-  RENDER_WORKFLOW_TARGET,
   SCAFFOLD_PROJECT_WORKFLOW_NAME,
 } from "./workflows";
 
@@ -191,51 +188,5 @@ describe("Task #18/19/21/22 workflows — barrel exports", () => {
     expect(DbLib.GIT_OPS_WORKFLOW_BY_KIND.publish?.workflowName).toBe(
       "publishVersion",
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Task #36: the render workflow routing constants (design-delta §6c / §7 workflow 9).
-// Same shared-constant discipline as the git-ops + ai-generation tables: the DBOS
-// static registry and the (task-37) API enqueue path import the SAME values.
-// ---------------------------------------------------------------------------
-
-describe("Task #36 workflows — renderVideo name + render queue", () => {
-  it("pins the render workflow name and the render queue name", () => {
-    expect(RENDER_WORKFLOW_NAME).toBe("renderVideo");
-    expect(RENDER_QUEUE_NAME).toBe("render");
-  });
-
-  it("exposes the render target as one { workflowName, queueName } pair", () => {
-    expect(RENDER_WORKFLOW_TARGET).toEqual({
-      workflowName: RENDER_WORKFLOW_NAME,
-      queueName: RENDER_QUEUE_NAME,
-    });
-  });
-
-  it("keeps the render workflow name distinct from every other registered workflow", () => {
-    const others = [
-      SCAFFOLD_PROJECT_WORKFLOW_NAME,
-      IMPORT_PROJECT_WORKFLOW_NAME,
-      COMMIT_VERSION_WORKFLOW_NAME,
-      PUBLISH_VERSION_WORKFLOW_NAME,
-      GENERATE_SCRIPT_WORKFLOW_NAME,
-      GENERATE_IMAGE_WORKFLOW_NAME,
-      GENERATE_AUDIO_WORKFLOW_NAME,
-      GENERATE_VIDEO_WORKFLOW_NAME,
-    ];
-    expect(others).not.toContain(RENDER_WORKFLOW_NAME);
-  });
-
-  it("keeps the render workflow name distinct from the queue name it rides", () => {
-    // Deliberate (decision D8): a workflow whose NAME equals its QUEUE name is a
-    // debugging trap in logs and in the registry's WORKFLOW_QUEUE table.
-    expect(RENDER_WORKFLOW_NAME).not.toBe(RENDER_QUEUE_NAME);
-  });
-
-  it("re-exports the render routing constants from the barrel", () => {
-    expect(DbLib.RENDER_WORKFLOW_NAME).toBe("renderVideo");
-    expect(DbLib.RENDER_QUEUE_NAME).toBe("render");
-    expect(DbLib.RENDER_WORKFLOW_TARGET.queueName).toBe("render");
   });
 });

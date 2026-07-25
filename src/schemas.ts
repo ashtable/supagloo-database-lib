@@ -403,23 +403,6 @@ export const RenderOutputSpecSchema = CompositionSpecSchema.extend({
 });
 export type RenderOutputSpec = z.infer<typeof RenderOutputSpecSchema>;
 
-// ---------------------------------------------------------------------------
-// Task #36: the DBOS enqueue payload for `renderWorkflow` (design-delta §6c / §7
-// workflow 9). Same minimal-echo shape as `Generate{Script,Image,Audio,Video}
-// PayloadSchema`: `workflowID === RenderJob.id`, so the payload only echoes the id and
-// EVERYTHING else the workflow needs — projectId, versionId, userId, the output spec
-// (width/height/fps/aspectRatio/codec), framesTotal — is read off the RenderJob row.
-// The GitHub installation id is likewise NOT in the payload: unlike the git-ops
-// workflows (whose jobs predate a Project row), a render always has a
-// `GithubConnection` reachable from `RenderJob.userId`.
-// ---------------------------------------------------------------------------
-
-/** The DBOS enqueue payload for the render workflow. */
-export const RenderVideoPayloadSchema = z.object({
-  renderJobId: z.string().min(1),
-});
-export type RenderVideoPayload = z.infer<typeof RenderVideoPayloadSchema>;
-
 // ===========================================================================
 // Auth / session WIRE DTOs (Task #10 — design-delta §2.1/§2.2/§6a/§8)
 // ---------------------------------------------------------------------------

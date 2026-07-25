@@ -167,35 +167,3 @@ export function isProviderCompatible(
     provider,
   );
 }
-
-/**
- * Task #36: the render workflow (design-delta §6c / §7 workflow 9). Unlike the two
- * tables above there is no `kind → workflow` fan-out here — a render is a single
- * workflow on its own dedicated queue — so the contract is one name + one queue
- * constant, plus a convenience pair for the (task-37) API enqueue path.
- *
- * NAME CHOICE (decision D8): `"renderVideo"`, deliberately NOT `"render"`. The queue is
- * already named `render` (QUEUE_CONFIG, task #15); a workflow whose name is
- * string-identical to its queue name is a genuine debugging trap — DBOS logs, the
- * system-DB `workflow_status` rows, and the worker's own `WORKFLOW_QUEUE` table all
- * carry both values, and two identical strings make it impossible to tell at a glance
- * which one a message is about.
- *
- * The `render` queue runs at `workerConcurrency: 1` (design-delta §9-Q8, accepted as
- * proposed): Remotion drives a real Chromium and is CPU/memory heavy. Sizing and the
- * `renderMedia` step timeout are load-tested in task 45, not here.
- */
-export const RENDER_WORKFLOW_NAME = "renderVideo" as const;
-export const RENDER_QUEUE_NAME = "render" as const;
-
-export interface RenderWorkflowTarget {
-  workflowName: string;
-  queueName: string;
-}
-
-/** The single `{ workflowName, queueName }` pair the API enqueues a render with
- *  (`workflowID = renderJobId`, per design-delta §6c). */
-export const RENDER_WORKFLOW_TARGET = {
-  workflowName: RENDER_WORKFLOW_NAME,
-  queueName: RENDER_QUEUE_NAME,
-} as const satisfies RenderWorkflowTarget;
