@@ -764,6 +764,183 @@ describe("Task #39 scripture-book — pinned residual decisions (U-SB7d)", () =>
 });
 
 // ---------------------------------------------------------------------------
+// U-SB7e — W5: what the following-book terminator ALSO admits, pinned
+// ---------------------------------------------------------------------------
+
+// W5 — ACCEPTED AS-IS, and pinned here because nothing pinned it either way. The form-(b)
+// rule "a following BOOK terminates a chapter number" (added to stop `"PSALM 23 JOHN 3:16"`
+// answering JHN, U-SB7 above) also ADMITS these degenerate `<alias><sep><number> <alias>`
+// strings, all of which derived null before it landed. Accepted rather than closed, and all
+// three reasons are needed because no one of them carries it alone:
+//   1. The forms are DEGENERATE. Nobody fills `scriptureReference` with `"Ho 2 Ho"`.
+//   2. Every one answers the FIRST book named, so no widened form can be a CROSS-BOOK
+//      mis-file — the only outcome this module treats as unrecoverable. Measured over 5,625
+//      `<wordy-alias><sep><number> <wordy-alias>` probes: 4,500 resolve, 4,500 of those were
+//      null before the terminator, and **0** answer anything but the first book named.
+//   3. Tightening the rule means DELETING the fix, not narrowing it. Measured over the
+//      82,369 `"<phrase> 23 <phrase> 3:16"` frames (287 match phrases squared), 80,006
+//      answer the FIRST book today and answered a LATER, WRONG book without it.
+// Trading 80,006 wrong-book strings for 4,500 degenerate non-null ones is not a trade this
+// module's asymmetry (null = loud 422, wrong code = silent permanent mis-file) allows.
+describe("Task #39 scripture-book — the following-book widening, pinned (U-SB7e)", () => {
+  it("resolves the degenerate <alias> <number> <alias> forms to their FIRST book (W5)", () => {
+    expect(deriveScriptureBook("Ho 2 Ho")).toBe("HOS");
+    expect(deriveScriptureBook("Song 2 Song")).toBe("SNG");
+    expect(deriveScriptureBook("Job 2 Job")).toBe("JOB");
+    expect(deriveScriptureBook("PS 4 PS")).toBe("PSA");
+    expect(deriveScriptureBook("Ho, 1 Ho")).toBe("HOS");
+    // The invariant that makes the widening tolerable rather than a W1 repeat: with a
+    // DIFFERENT second book it is still the FIRST one that answers.
+    expect(deriveScriptureBook("Ho 3 John")).toBe("HOS");
+  });
+
+  it("...while the realistic prose next door still returns null (W5)", () => {
+    // The widening is bounded by "only a recognized BOOK opens the door". Each of these
+    // also puts a number after a word-like alias, and each still 422s.
+    for (const ref of [
+      "Ho ho, 1 more sleep",
+      "PS, 1 more thing",
+      "Song 1 of 2",
+      "Chapter 1 Genesis",
+      "Part 1 Job",
+      "Amos 1 and Andy",
+    ]) {
+      expect(deriveScriptureBook(ref), JSON.stringify(ref)).toBeNull();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U-SB7f — rules a mutation sweep found UNPINNED, now pinned
+// ---------------------------------------------------------------------------
+
+// Every accept/reject rule and guard in `scripture-book.ts` was deleted or widened one at a
+// time and the suite re-run — 73 mutations, 46 of them already killed by the blocks above.
+// These are the survivors that had REAL behaviour behind them: each assertion below is the
+// one that goes red when its rule is removed. (The remaining survivors are behaviourally
+// INERT — see the note at the end of this block.)
+describe("Task #39 scripture-book — rules the mutation sweep found unpinned (U-SB7f)", () => {
+  // The JOINER SET is closed at six characters plus the words AND/TO. `-`, `,`, `…`, AND and
+  // TO are pinned by U-SB7; these three were not, so deleting any of them was free.
+  it("pins the remaining form-(c) joiners: `;`, `&` and `/`", () => {
+    expect(deriveScriptureBook("Genesis; Exodus 1:1")).toBe("GEN");
+    expect(deriveScriptureBook("Genesis & Exodus 1:1")).toBe("GEN");
+    expect(deriveScriptureBook("Genesis/Exodus 1:1")).toBe("GEN");
+  });
+
+  // The typographic-dash fold, ISOLATED. U-SB3's `"GENESIS 1:1–4"` does not isolate it —
+  // there the verse colon terminates the chapter number before the dash is ever reached, so
+  // the fold could be deleted and that test would stay green. A dash used as a JOINER is the
+  // shape that needs it, because JOINER_RE knows only the folded ASCII `-`.
+  it("pins the typographic-dash fold via a dash used as a JOINER", () => {
+    expect(deriveScriptureBook("Genesis – Exodus 1:1")).toBe("GEN"); // en dash
+    expect(deriveScriptureBook("Genesis — Exodus 1:1")).toBe("GEN"); // em dash
+    expect(deriveScriptureBook("Genesis ‑ Exodus 1:1")).toBe("GEN"); // U+2011
+  });
+
+  // trim(), ISOLATED. U-SB6's `"  genesis   1:1 "` does not isolate it either: that resolves
+  // through form (b), which does not care where the phrase starts. Form (a) BARE is the one
+  // that demands a LITERAL position 0, so a bare book name wrapped in whitespace is the only
+  // shape that breaks if trim() goes.
+  it("pins trim() via a BARE book name with surrounding whitespace", () => {
+    expect(deriveScriptureBook(" Genesis ")).toBe("GEN");
+    expect(deriveScriptureBook("\n Genesis \t")).toBe("GEN");
+    expect(deriveScriptureBook("  The Revelation  ")).toBe("REV");
+  });
+
+  // The rest of CHAPTER_TERMINATORS. `:` and `.` are pinned ("Psalm 23:1 KJV", "GEN.1.1");
+  // `,`, `;` and `-` were not. Read these against W4's `"Psalm 23 KJV"` -> null: it is the
+  // SAME asymmetry W4 pins for `:`, not a second one. Reference punctuation terminates the
+  // number before the trailing word is ever examined, so a translation suffix is harmless
+  // once anything at all separates it from the chapter.
+  it("pins `,`, `;` and `-` as chapter terminators (W4's asymmetry, generalized)", () => {
+    expect(deriveScriptureBook("Psalm 23, KJV")).toBe("PSA");
+    expect(deriveScriptureBook("Psalm 23; KJV")).toBe("PSA");
+    expect(deriveScriptureBook("Psalm 23-KJV")).toBe("PSA");
+    // ...and the UNSEPARATED form is still the loud 422 that W4 pins.
+    expect(deriveScriptureBook("Psalm 23 KJV")).toBeNull();
+  });
+
+  // The punctuation run CHAPTER_RE allows between a book name and its chapter number. Space,
+  // `.` and `,` are pinned ("Psalm 23", "GEN.1.1", "1 John, 1 John"); `:`, `;` and `#` were
+  // not. All three only ever add recall on a tight spelling — none can reach prose, because
+  // a chapter NUMBER still has to follow.
+  it("pins `:`, `;` and `#` between a book name and its chapter number", () => {
+    expect(deriveScriptureBook("Psalm:23")).toBe("PSA");
+    expect(deriveScriptureBook("Psalm;23")).toBe("PSA");
+    expect(deriveScriptureBook("Psalm #23")).toBe("PSA");
+  });
+
+  // A joiner WORD must be a WHOLE word. Without the `(?![A-Z0-9])` lookaheads, AND/TO match
+  // the head of a longer token and a digit behind it then reads as a chapter range.
+  it("pins the whole-word requirement on the AND / TO joiners", () => {
+    expect(deriveScriptureBook("Genesis 1 and2")).toBeNull();
+    expect(deriveScriptureBook("Genesis 1 to2")).toBeNull();
+    // ...while the real joiners still work, so the boundary is visible.
+    expect(deriveScriptureBook("Genesis 1 and 2")).toBe("GEN");
+    expect(deriveScriptureBook("Genesis 1 to 3")).toBe("GEN");
+  });
+
+  // The BOOK that terminates a chapter number must be a WHOLE book, and must be separated
+  // from the number by a SPACE. Both halves are what keep the U-SB7e widening off prose:
+  // without the end-boundary check `"Johnny"` terminates a chapter and `"Psalm 23 Johnny
+  // 3:16"` derives PSA out of a sentence.
+  it("pins the following-BOOK terminator's two guards (a whole book, and a space)", () => {
+    expect(deriveScriptureBook("Psalm 23 Johnny 3:16")).toBeNull();
+    expect(deriveScriptureBook("Genesis 1 Exodusy 2")).toBeNull();
+    expect(deriveScriptureBook("Psalm 23John 3:16")).toBeNull();
+    // ...against the shapes that DO resolve, so the boundary is visible rather than implied.
+    expect(deriveScriptureBook("Psalm 23 John 3:16")).toBe("PSA");
+    expect(deriveScriptureBook("Genesis 1 Exodus 2")).toBe("GEN");
+  });
+
+  // A possessive is skipped ON THE WALK, not only at its ends, and that is a CROSS-BOOK
+  // guard rather than a nicety: without it the form-(c) chain stops dead at the `'S`, the
+  // FIRST book is rejected, and the scan walks on to answer the SECOND one (JHN / SNG here).
+  it("pins skipPossessive INSIDE a form-(c) chain (a cross-book guard)", () => {
+    for (const ref of [
+      "Genesis, John's, Exodus 1:1",
+      "Genesis - John's - Exodus 1:1",
+      "Genesis - Song of Solomon's - Exodus 1:1",
+    ]) {
+      expect(deriveScriptureBook(ref), JSON.stringify(ref)).toBe("GEN");
+    }
+    expect(deriveScriptureBook("Job's, John's, Genesis 1:1")).toBe("JOB");
+  });
+
+  // THE INERT SURVIVORS, recorded so the next auditor does not re-derive them. Eleven
+  // mutations survive the suite AND make no behavioural difference at all — 0 differing
+  // answers over a 253,462-string differential frame space:
+  //   - `isOrdinalTail`'s `start < 2`, preceding-SPACE and preceding-DIGIT checks: all three
+  //     are implied by the `PHRASE_SET.has(...)` test that follows them, because every
+  //     multi-token match phrase is `<digit> <name>`.
+  //   - `bookPhraseAt`'s length-overrun guard and `joinsAnotherReference`'s memo: pure
+  //     performance (`String.startsWith` past the end is already false; the memo only avoids
+  //     re-walking a suffix whose verdict is a property of the suffix).
+  //   - MATCH_PHRASES' first-claimant-wins and its code/name/alias priority: inert *because*
+  //     U-SB1's expanded-variant collision guard holds — with no variant claimed by two
+  //     books, the claim order cannot change any code.
+  //   - `NUMERIC_PREFIX_RE`'s `III|II|I` alternation order (the trailing lookahead already
+  //     forces the longest), `scanForBook`'s non-committing inner loop (no phrase pair in
+  //     today's table has a shorter member that is accepted where the longer is rejected),
+  //     `deriveScriptureBook`'s empty-string early return (the scan loop is a no-op on "")
+  //     and `isScriptureBookCode`'s `typeof` guard (`Set.has` of a non-string is false).
+  // They are kept as documentation/defence-in-depth, like the MATCH_PHRASES sort in U-SB1.
+  //
+  // ONE SURVIVOR IS A KNOWN RESIDUAL AND IS DELIBERATELY NOT PINNED (W6). `:` is not a
+  // joiner — and because the scan walks PAST a matched-but-rejected book, a chapter-free
+  // first book followed by a NON-joiner separator hands the answer to the SECOND book:
+  // `"Genesis: Exodus 1:1"` derives EXO. So do `"Genesis or Exodus 1:1"`,
+  // `"Genesis (Exodus 1:1"`, `"Genesis vs Exodus 1:1"` and `"Genesis | Exodus 1:1"`. That is
+  // the cross-book outcome the module says it must never produce, so it is NOT pinned as a
+  // decision here. It is also not a one-character fix: adding `:` to JOINER_RE is measurably
+  // safe (234,987 colon frames improve, 0 regress) but closes only the colon member, while
+  // the general fix — refusing to walk past a rejected book — is what makes
+  // `"Read Genesis 1:1, Exodus 2:2"` -> GEN work and would turn `"A song about Genesis 1:1"`
+  // (GEN today) into null. It needs its own adjudication and its own sweep.
+});
+
+// ---------------------------------------------------------------------------
 // U-SB8 — unrecognized -> null (the 422 path)
 // ---------------------------------------------------------------------------
 
