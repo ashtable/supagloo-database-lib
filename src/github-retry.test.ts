@@ -8,9 +8,10 @@ import {
 } from "./github-retry";
 
 // Unit tests for the shared GitHub retry/backoff primitive (plan row 64, D64.2/
-// D64.3/D64.4/D64.6). This is a PORT of the harness reference implementation at
-// `supagloo/tests/support/e2e-github-api.mjs:199-235` (tested at
-// `supagloo/tests/unit/e2e-github-api.test.ts:191-267`) — that file is root TEST
+// D64.3/D64.4/D64.6). This is a PORT of the harness reference implementation —
+// `retryDelayMs` at `supagloo/tests/support/e2e-github-api.mjs:199-210` and
+// `isRetryable` at that same file's `:244-254` (tested at
+// `supagloo/tests/unit/e2e-github-api.test.ts:192-267`) — that file is root TEST
 // code, so the product may never import it; §11.7 wants "one implementation,
 // four consumers" and db-lib is where shared primitives live.
 //

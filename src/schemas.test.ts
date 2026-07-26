@@ -588,6 +588,371 @@ describe("Task #37 schemas — RenderIdParamSchema / RenderListQuerySchema", () 
 });
 
 // ---------------------------------------------------------------------------
+// G3. Tasks #39/#40 — gallery WIRE DTOs (design-delta §2.7/§6c/§8, plan D6/D11/D12)
+// ---------------------------------------------------------------------------
+
+const validGalleryItemDto = {
+  id: "gi_1",
+  renderJobId: "rj_1",
+  projectId: "prj_1",
+  title: "In the beginning",
+  description: "A four-scene reading of the creation account.",
+  scriptureReference: "GENESIS 1:1-4",
+  scriptureBook: "GEN",
+  translation: "KJV",
+  durationSeconds: 42,
+  visibility: "public",
+  publishedAt: "2026-07-25T10:00:00.000Z",
+  upvoteCount: 7,
+  thumbnailUrl: "https://s3.example.test/renders/rj_1/thumb.jpg?X-Amz-Signature=…",
+  rank: 1,
+  viewerHasUpvoted: false,
+  owner: { displayName: "Mary K", avatarInitials: "MK" },
+};
+
+describe("Tasks #39/#40 schemas — GallerySortSchema (U-GS1)", () => {
+  it("is the closed three-value sort enum", () => {
+    expect(opts(S.GallerySortSchema)).toEqual(
+      ["popular", "newest", "trending"].sort(),
+    );
+  });
+
+  it("rejects any other sort key", () => {
+    for (const bad of ["hot", "top", "POPULAR", ""]) {
+      expect(S.GallerySortSchema.safeParse(bad).success, `rejects ${bad}`).toBe(
+        false,
+      );
+    }
+  });
+});
+
+describe("Tasks #39/#40 schemas — GalleryListQuerySchema (U-GS1)", () => {
+  it("defaults sort to `popular` (the design's default listing order)", () => {
+    const parsed = S.GalleryListQuerySchema.parse({});
+    expect(parsed.sort).toBe("popular");
+    expect(parsed.q).toBeUndefined();
+    expect(parsed.cursor).toBeUndefined();
+  });
+
+  it("accepts each sort and the q/cursor params — and NOTHING else", () => {
+    for (const sort of ["popular", "newest", "trending"] as const) {
+      expect(S.GalleryListQuerySchema.parse({ sort }).sort).toBe(sort);
+    }
+    const parsed = S.GalleryListQuerySchema.parse({
+      sort: "newest",
+      q: "creation",
+      cursor: "eyJzIjoibmV3ZXN0In0",
+    });
+    // Exhaustive on purpose: the query surface is exactly these three keys.
+    expect(parsed).toEqual({
+      sort: "newest",
+      q: "creation",
+      cursor: "eyJzIjoibmV3ZXN0In0",
+    });
+  });
+
+  it("rejects an unknown sort (`sort=hot` is a 400 at the Zod boundary)", () => {
+    expect(S.GalleryListQuerySchema.safeParse({ sort: "hot" }).success).toBe(false);
+  });
+
+  it("declares NO client `limit` (page size is server-owned — an unbounded public limit is a DoS)", () => {
+    const parsed = S.GalleryListQuerySchema.parse({ limit: "1000" }) as Record<
+      string,
+      unknown
+    >;
+    expect("limit" in parsed).toBe(false);
+  });
+
+  it("declares NO `book` filter (the gallery is not filterable by book — book membership is a property of the TRANSLATION, YouVersion's authority, not ours)", () => {
+    const parsed = S.GalleryListQuerySchema.parse({
+      sort: "newest",
+      book: "GEN",
+    }) as Record<string, unknown>;
+    expect("book" in parsed).toBe(false);
+    expect(parsed).toEqual({ sort: "newest" });
+  });
+
+  it("accepts an EMPTY `q` (the service treats blank as absent, never as a `%%` match)", () => {
+    expect(S.GalleryListQuerySchema.parse({ q: "" }).q).toBe("");
+    expect(S.GalleryListQuerySchema.parse({ q: "   " }).q).toBe("   ");
+  });
+});
+
+describe("Tasks #39/#40 schemas — PublishGalleryItemRequestSchema (U-GS2)", () => {
+  const minimal = {
+    title: "In the beginning",
+    scriptureReference: "GENESIS 1:1-4",
+    translation: "KJV",
+  };
+
+  it("defaults description to \"\" and visibility to `public`", () => {
+    const parsed = S.PublishGalleryItemRequestSchema.parse(minimal);
+    expect(parsed.description).toBe("");
+    expect(parsed.visibility).toBe("public");
+  });
+
+  it("accepts an explicit unlisted visibility and a long description", () => {
+    const parsed = S.PublishGalleryItemRequestSchema.parse({
+      ...minimal,
+      description: "x".repeat(1000),
+      visibility: "unlisted",
+    });
+    expect(parsed.visibility).toBe("unlisted");
+    expect(parsed.description).toHaveLength(1000);
+  });
+
+  it("rejects an empty/missing title and an over-long one", () => {
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({ ...minimal, title: "" }).success,
+    ).toBe(false);
+    const { title: _t, ...noTitle } = minimal;
+    expect(S.PublishGalleryItemRequestSchema.safeParse(noTitle).success).toBe(false);
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({
+        ...minimal,
+        title: "x".repeat(121),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("TRIMS title + scriptureReference, so a whitespace-only value is a 400 not an invisible card title", () => {
+    const parsed = S.PublishGalleryItemRequestSchema.parse({
+      ...minimal,
+      title: "  In the beginning  ",
+      scriptureReference: "  GENESIS 1:1-4  ",
+    });
+    expect(parsed.title).toBe("In the beginning");
+    expect(parsed.scriptureReference).toBe("GENESIS 1:1-4");
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({ ...minimal, title: "   " }).success,
+    ).toBe(false);
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({
+        ...minimal,
+        scriptureReference: "\t\n ",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an empty/missing scriptureReference (the 422 deriver needs something to read)", () => {
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({
+        ...minimal,
+        scriptureReference: "",
+      }).success,
+    ).toBe(false);
+    const { scriptureReference: _r, ...noRef } = minimal;
+    expect(S.PublishGalleryItemRequestSchema.safeParse(noRef).success).toBe(false);
+  });
+
+  it("bounds title AND scriptureReference at exactly 120 characters (both boundaries)", () => {
+    // The upper bound matters on scriptureReference specifically: it is rendered
+    // VERBATIM on a public card and it is the string echoed back in the 422 message, so
+    // an unbounded value is both a layout break and an error-message payload. Asserted
+    // at 120/121 rather than "some long string", so widening the cap fails here.
+    const ok = (patch: Record<string, unknown>) =>
+      S.PublishGalleryItemRequestSchema.safeParse({ ...minimal, ...patch }).success;
+    expect(ok({ scriptureReference: "G".repeat(120) })).toBe(true);
+    expect(ok({ scriptureReference: "G".repeat(121) })).toBe(false);
+    expect(ok({ title: "T".repeat(120) })).toBe(true);
+    expect(ok({ title: "T".repeat(121) })).toBe(false);
+    expect(ok({ description: "D".repeat(1000) })).toBe(true);
+    expect(ok({ description: "D".repeat(1001) })).toBe(false);
+  });
+
+  it("rejects an empty translation (delegates to TranslationSchema) and an over-long description", () => {
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({ ...minimal, translation: "" })
+        .success,
+    ).toBe(false);
+    expect(
+      S.PublishGalleryItemRequestSchema.safeParse({
+        ...minimal,
+        description: "x".repeat(1001),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("carries NO asset keys and NO scriptureBook (both are server-derived, never client-supplied)", () => {
+    const parsed = S.PublishGalleryItemRequestSchema.parse({
+      ...minimal,
+      videoAssetKey: "renders/evil/output.mp4",
+      thumbnailAssetKey: "renders/evil/thumb.jpg",
+      scriptureBook: "REV",
+      durationSeconds: 99999,
+    }) as Record<string, unknown>;
+    expect("videoAssetKey" in parsed).toBe(false);
+    expect("thumbnailAssetKey" in parsed).toBe(false);
+    expect("scriptureBook" in parsed).toBe(false);
+    expect("durationSeconds" in parsed).toBe(false);
+  });
+});
+
+describe("Tasks #39/#40 schemas — GalleryItemDtoSchema (U-GS4)", () => {
+  it("parses a full listing row projection", () => {
+    const parsed = S.GalleryItemDtoSchema.parse(validGalleryItemDto);
+    expect(parsed.scriptureBook).toBe("GEN");
+    expect(parsed.owner.avatarInitials).toBe("MK");
+    expect(parsed.rank).toBe(1);
+  });
+
+  it("accepts rank: null (non-null ONLY under sort=popular) and thumbnailUrl: null", () => {
+    const parsed = S.GalleryItemDtoSchema.parse({
+      ...validGalleryItemDto,
+      rank: null,
+      thumbnailUrl: null,
+    });
+    expect(parsed.rank).toBeNull();
+    expect(parsed.thumbnailUrl).toBeNull();
+  });
+
+  it("requires the owner projection (displayName + avatarInitials)", () => {
+    const { owner: _o, ...noOwner } = validGalleryItemDto;
+    expect(S.GalleryItemDtoSchema.safeParse(noOwner).success).toBe(false);
+    expect(
+      S.GalleryItemDtoSchema.safeParse({
+        ...validGalleryItemDto,
+        owner: { displayName: "Mary K" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("omits videoAssetKey, ownerId and viewCount (public consumers go through stream-url)", () => {
+    const parsed = S.GalleryItemDtoSchema.parse({
+      ...validGalleryItemDto,
+      videoAssetKey: "renders/rj_1/output.mp4",
+      ownerId: "usr_leak",
+      viewCount: 0,
+    }) as Record<string, unknown>;
+    expect("videoAssetKey" in parsed).toBe(false);
+    expect("ownerId" in parsed).toBe(false);
+    expect("viewCount" in parsed).toBe(false);
+  });
+
+  it("rejects an unknown visibility, a non-integer duration and a non-integer rank", () => {
+    const bad = (patch: Record<string, unknown>) =>
+      S.GalleryItemDtoSchema.safeParse({ ...validGalleryItemDto, ...patch }).success;
+    expect(bad({ visibility: "private" })).toBe(false);
+    expect(bad({ durationSeconds: 1.5 })).toBe(false);
+    expect(bad({ rank: 1.5 })).toBe(false);
+    expect(bad({ upvoteCount: "7" })).toBe(false);
+    expect(bad({ viewerHasUpvoted: "false" })).toBe(false);
+  });
+
+  // REQUIRED-NESS, key by key. The failure this guards is concrete and cheap to ship: a
+  // handler whose Prisma `select` forgets `scriptureBook` or `publishedAt` returns an
+  // object MISSING that key, and if the field were `.optional()` the DTO would accept it
+  // and the card would render `undefined`. Only `rank` and `thumbnailUrl` are nullable,
+  // and both are nullable-NOT-optional, so the handler is still forced to decide (a null
+  // rank means "not the popular sort"; a null thumbnailUrl means "could not be signed").
+  // A fully-populated positive fixture cannot catch a loosened field, and neither can
+  // tests/typecheck/schemas.type-assert.ts, which builds exactly such a literal.
+  it("requires EVERY key — omitting any one fails (a partial Prisma select must not parse)", () => {
+    const keys = Object.keys(validGalleryItemDto);
+    expect(keys, "the fixture must cover the whole DTO").toHaveLength(16);
+    for (const key of keys) {
+      const partial: Record<string, unknown> = { ...validGalleryItemDto };
+      delete partial[key];
+      expect(
+        S.GalleryItemDtoSchema.safeParse(partial).success,
+        `omitting ${key} must fail — has it become .optional()/.nullish()?`,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps `translation` on the shared TranslationSchema, not a free string", () => {
+    // TranslationSchema is `z.string().min(1)`. A plain `z.string()` here would accept an
+    // empty translation and put a blank `· ` on a public card; this is the assertion that
+    // fails if the field is ever downgraded.
+    expect(
+      S.GalleryItemDtoSchema.safeParse({ ...validGalleryItemDto, translation: "" })
+        .success,
+    ).toBe(false);
+    expect(
+      S.GalleryItemDtoSchema.safeParse({ ...validGalleryItemDto, translation: "BSB" })
+        .success,
+    ).toBe(true);
+  });
+});
+
+describe("Tasks #39/#40 schemas — gallery response envelopes (U-GS3/U-GS4)", () => {
+  it("GalleryItemResponseSchema is keyed on `item`, never a bare row", () => {
+    expect(
+      S.GalleryItemResponseSchema.safeParse({ item: validGalleryItemDto }).success,
+    ).toBe(true);
+    expect(S.GalleryItemResponseSchema.safeParse(validGalleryItemDto).success).toBe(
+      false,
+    );
+  });
+
+  it("GalleryListResponseSchema is a KEYED envelope — a bare array fails", () => {
+    expect(
+      S.GalleryListResponseSchema.safeParse({
+        items: [validGalleryItemDto],
+        nextCursor: null,
+      }).success,
+    ).toBe(true);
+    expect(S.GalleryListResponseSchema.safeParse([validGalleryItemDto]).success).toBe(
+      false,
+    );
+  });
+
+  it("nextCursor is REQUIRED and nullable (null means genuinely exhausted, so the UI can hide `Load more` honestly)", () => {
+    expect(
+      S.GalleryListResponseSchema.parse({ items: [], nextCursor: null }).nextCursor,
+    ).toBeNull();
+    expect(
+      S.GalleryListResponseSchema.parse({ items: [], nextCursor: "eyJ9" }).nextCursor,
+    ).toBe("eyJ9");
+    expect(S.GalleryListResponseSchema.safeParse({ items: [] }).success).toBe(false);
+  });
+
+  it("items is REQUIRED too (an envelope with no items is a bug, not an empty page)", () => {
+    // An empty page is `{ items: [], nextCursor: null }`. If `items` were `.optional()`,
+    // a handler that forgot to set it would return `{ nextCursor: null }`, and the grid
+    // would crash on `items.map` rather than render zero cards.
+    expect(S.GalleryListResponseSchema.safeParse({ nextCursor: null }).success).toBe(
+      false,
+    );
+    expect(
+      S.GalleryListResponseSchema.safeParse({ items: [], nextCursor: null }).success,
+    ).toBe(true);
+  });
+
+  it("declares NO hasMore and NO total (a second field that can disagree with nextCursor)", () => {
+    const parsed = S.GalleryListResponseSchema.parse({
+      items: [],
+      nextCursor: null,
+      hasMore: true,
+      total: 99,
+    }) as Record<string, unknown>;
+    expect("hasMore" in parsed).toBe(false);
+    expect("total" in parsed).toBe(false);
+  });
+
+  it("GalleryDeleteResponseSchema is { ok: true } (the DELETE /v1/projects/:id precedent, not 204)", () => {
+    expect(S.GalleryDeleteResponseSchema.safeParse({ ok: true }).success).toBe(true);
+    expect(S.GalleryDeleteResponseSchema.safeParse({ ok: false }).success).toBe(false);
+    expect(S.GalleryDeleteResponseSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("GalleryIdParamSchema requires a non-empty id", () => {
+    expect(S.GalleryIdParamSchema.safeParse({ id: "gi_1" }).success).toBe(true);
+    expect(S.GalleryIdParamSchema.safeParse({ id: "" }).success).toBe(false);
+    expect(S.GalleryIdParamSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("stream-url REUSES FilePresignDownloadResponseSchema (one presign wire shape)", () => {
+    expect(
+      S.FilePresignDownloadResponseSchema.safeParse({
+        url: "https://s3.example.test/renders/rj_1/output.mp4?X-Amz-Signature=…",
+        expiresAt: "2026-07-25T10:02:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // H. Barrel exports + no Prisma collision
 // ---------------------------------------------------------------------------
 
@@ -620,6 +985,15 @@ describe("Task #7 schemas — barrel exports", () => {
     "RenderJobListResponseSchema",
     "RenderIdParamSchema",
     "RenderListQuerySchema",
+    // Tasks #39/#40 — gallery wire DTOs
+    "GallerySortSchema",
+    "PublishGalleryItemRequestSchema",
+    "GalleryItemDtoSchema",
+    "GalleryItemResponseSchema",
+    "GalleryListResponseSchema",
+    "GalleryListQuerySchema",
+    "GalleryIdParamSchema",
+    "GalleryDeleteResponseSchema",
   ] as const;
 
   it("re-exports every schema from the package entry as a usable Zod schema", () => {
@@ -639,6 +1013,17 @@ describe("Task #7 schemas — barrel exports", () => {
     expect(DbLib.JobStatus).toBeDefined();
     expect(DbLib.RenderStatus).toBeDefined();
     expect(DbLib.AiGenerationKind).toBeDefined();
+  });
+
+  it("gallery wire types are *Dto-suffixed so they cannot shadow the Prisma models", () => {
+    const lib = DbLib as unknown as Record<string, unknown>;
+    // `GalleryItem` / `GalleryUpvote` are generated Prisma model TYPES re-exported by
+    // `export * from "./generated/prisma/client"`. A same-named wire schema would be
+    // dropped from the barrel, so the DTO is `GalleryItemDtoSchema` (RenderJobDto rule).
+    expect(lib.GalleryItemSchema, "GalleryItemSchema must not exist").toBeUndefined();
+    expect(lib.GalleryUpvoteSchema, "GalleryUpvoteSchema must not exist").toBeUndefined();
+    expect(DbLib.Prisma.GalleryItemScalarFieldEnum).toBeDefined();
+    expect(DbLib.Prisma.GalleryUpvoteScalarFieldEnum).toBeDefined();
   });
 });
 

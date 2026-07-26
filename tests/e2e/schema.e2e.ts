@@ -167,6 +167,85 @@ afterAll(async () => {
   }
 });
 
+/**
+ * The ORDERED column list of every index on `table`, straight out of the catalog after
+ * `prisma migrate deploy` — the only evidence that the migration actually created the
+ * indexes IN THE DATABASE.
+ *
+ * Why the catalog and not `pg_indexes.indexdef`: `indexdef` is a rendered string whose
+ * quoting varies with the identifier (`visibility` bare, `"publishedAt"` quoted), so a
+ * substring match on it is fragile and, worse, can be satisfied by an index whose
+ * columns are in the WRONG ORDER. Column order is the whole point of a composite sort
+ * index — `(visibility, upvoteCount, id)` serves the listing, `(id, upvoteCount,
+ * visibility)` serves nothing — so it is read positionally.
+ */
+async function indexColumns(
+  table: string,
+): Promise<Record<string, string[]>> {
+  const rows = await client.$queryRawUnsafe<
+    Array<{ index_name: string; pos: number; col: string }>
+  >(
+    `SELECT i.relname AS index_name,
+            k.ord::int AS pos,
+            pg_get_indexdef(i.oid, k.ord::int, true) AS col
+       FROM pg_class t
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       JOIN pg_index ix ON ix.indrelid = t.oid
+       JOIN pg_class i ON i.oid = ix.indexrelid
+       CROSS JOIN LATERAL generate_series(1, ix.indnatts) AS k(ord)
+      WHERE n.nspname = 'public' AND t.relname = $1
+      ORDER BY i.relname, k.ord`,
+    table,
+  );
+  const byIndex: Record<string, string[]> = {};
+  for (const row of [...rows].sort((a, b) => Number(a.pos) - Number(b.pos))) {
+    (byIndex[row.index_name] ??= []).push(row.col.replaceAll('"', ""));
+  }
+  return byIndex;
+}
+
+// The two composite sort indexes ARE the task-#39 migration. Every other assertion
+// about them in this repo reads TEXT — the schema file or the migration SQL — and text
+// can be commented out, malformed, or simply never applied. This is the one place that
+// asks the running database what it actually has.
+describe("e2e: Task #39 gallery sort indexes in Postgres", () => {
+  it("created both composite indexes on GalleryItem, in the designed column order", async () => {
+    const indexes = await indexColumns("GalleryItem");
+    expect(
+      indexes["GalleryItem_visibility_publishedAt_id_idx"],
+      "sort=newest index missing from the DATABASE (did migrate deploy run?)",
+    ).toEqual(["visibility", "publishedAt", "id"]);
+    expect(
+      indexes["GalleryItem_visibility_upvoteCount_id_idx"],
+      "sort=popular (the DEFAULT sort) index missing from the DATABASE",
+    ).toEqual(["visibility", "upvoteCount", "id"]);
+  });
+
+  it("kept the three pre-existing single-column indexes and the renderJobId unique", async () => {
+    const indexes = await indexColumns("GalleryItem");
+    expect(indexes["GalleryItem_projectId_idx"]).toEqual(["projectId"]);
+    expect(indexes["GalleryItem_ownerId_idx"]).toEqual(["ownerId"]);
+    expect(indexes["GalleryItem_scriptureBook_idx"]).toEqual(["scriptureBook"]);
+    expect(indexes["GalleryItem_renderJobId_key"]).toEqual(["renderJobId"]);
+    expect(indexes["GalleryItem_pkey"]).toEqual(["id"]);
+  });
+
+  it("leaves GalleryUpvote's indexes untouched (task #40 adds none)", async () => {
+    const indexes = await indexColumns("GalleryUpvote");
+    expect(indexes["GalleryUpvote_userId_galleryItemId_key"]).toEqual([
+      "userId",
+      "galleryItemId",
+    ]);
+    expect(indexes["GalleryUpvote_galleryItemId_idx"]).toEqual(["galleryItemId"]);
+  });
+
+  // NOT asserted here: `prisma migrate diff --exit-code` (no-drift). It cannot run
+  // against this database — DBOS owns an out-of-Prisma `noop_proof` table in the shared
+  // dev DB, so the diff is permanently non-empty ("[-] Removed tables - noop_proof") and
+  // the assertion would fail for a reason that has nothing to do with the schema. The
+  // no-drift proof is run against a PRISTINE scratch database instead (plan §7(a) 3).
+});
+
 describe("e2e: Task #4 schema against Compose Postgres", () => {
   it("migrated all five tables", async () => {
     const rows = await client.$queryRawUnsafe<Array<{ table_name: string }>>(

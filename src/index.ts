@@ -52,6 +52,19 @@ export {
 } from "./s3-keys";
 export type { ParsedS3Key } from "./s3-keys";
 
+// Shared scripture book-code derivation (design-delta §2.7; task #39). One
+// implementation of "free-text reference -> USFM book code" so the gallery's non-null
+// `scriptureBook` column and any future consumer normalize identically. The recognized
+// book set is this normalizer's match vocabulary, NOT a canon claim — which books a
+// translation contains is YouVersion's authority, not ours. Explicitly named (not
+// `export *`) like `github.ts`/`s3-keys.ts`.
+export {
+  SCRIPTURE_BOOKS,
+  deriveScriptureBook,
+  isScriptureBookCode,
+} from "./scripture-book";
+export type { ScriptureBook } from "./scripture-book";
+
 // Shared semver parse/compare helpers (design-delta §2.6). Free-form,
 // non-zero-padded `ProjectVersion.semver` must be ordered numerically (0.10.0 is
 // newer than 0.2.0). Shared so the API version listing (#14) and the DBOS

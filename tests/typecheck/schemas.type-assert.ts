@@ -9,16 +9,26 @@
 import type {
   CompositionSpec,
   CreateRenderRequest,
+  GalleryItemDto,
+  GalleryListResponse,
+  GallerySort,
   GeneratedStoryboard,
   ManifestScene,
   MusicSpec,
   NarrationSpec,
   ProjectManifest,
+  PublishGalleryItemRequest,
   RenderJobDto,
   RenderOutputSpec,
   SceneVisualPrompt,
+  ScriptureBook,
   Translation,
   VoiceDescriptor,
+} from "../../src/index";
+import {
+  SCRIPTURE_BOOKS,
+  deriveScriptureBook,
+  isScriptureBookCode,
 } from "../../src/index";
 
 // §9-Q10 (broadened): Translation is a non-empty string, not a fixed enum — the licensed
@@ -133,3 +143,86 @@ export const renderDto: RenderJobDto = {
 // `status` is the closed RenderStatus union, not a free string.
 // @ts-expect-error "rendering" is not a RenderStatus
 export const badRenderDto: RenderJobDto = { ...renderDto, status: "rendering" };
+
+// ── Tasks #39/#40 gallery wire DTOs + the shared book deriver ────────────────
+
+export const gallerySort: GallerySort = "trending";
+// @ts-expect-error "hot" is not a GallerySort
+export const badGallerySort: GallerySort = "hot";
+
+export const galleryItem: GalleryItemDto = {
+  id: "gi_1",
+  renderJobId: "rj_1",
+  projectId: "prj_1",
+  title: "In the beginning",
+  description: "",
+  scriptureReference: "GENESIS 1:1-4",
+  scriptureBook: "GEN",
+  translation: "KJV",
+  durationSeconds: 42,
+  visibility: "public",
+  publishedAt: "2026-07-25T10:00:00.000Z",
+  upvoteCount: 7,
+  thumbnailUrl: null,
+  rank: null, // non-null ONLY under sort=popular
+  viewerHasUpvoted: false,
+  owner: { displayName: "Mary K", avatarInitials: "MK" },
+};
+
+// `visibility` is the closed GalleryVisibility union, not a free string.
+// @ts-expect-error "private" is not a GalleryVisibility
+export const badGalleryItem: GalleryItemDto = { ...galleryItem, visibility: "private" };
+
+// REQUIRED-NESS at the TYPE level. The positive literal above is fully populated, so it
+// keeps compiling if a field is loosened to `.optional()` — the exact mutation that lets a
+// handler with an incomplete Prisma `select` render `undefined` on a public card. Each
+// directive below fails as UNUSED the moment its field stops being required, so the type
+// lane catches the loosening too, not only the runtime omit-loop in src/schemas.test.ts.
+// The four chosen are the ones a `select` most plausibly drops.
+const { scriptureBook: _dropBook, ...itemNoBook } = galleryItem;
+// @ts-expect-error scriptureBook is REQUIRED — a non-null column on every card DTO
+export const galleryItemNoBook: GalleryItemDto = itemNoBook;
+
+const { publishedAt: _dropPublishedAt, ...itemNoPublishedAt } = galleryItem;
+// @ts-expect-error publishedAt is REQUIRED — the newest-sort key and the card's date
+export const galleryItemNoPublishedAt: GalleryItemDto = itemNoPublishedAt;
+
+const { thumbnailUrl: _dropThumb, ...itemNoThumb } = galleryItem;
+// @ts-expect-error thumbnailUrl is nullable but NOT optional — the key must be present
+export const galleryItemNoThumb: GalleryItemDto = itemNoThumb;
+
+const { rank: _dropRank, ...itemNoRank } = galleryItem;
+// @ts-expect-error rank is nullable but NOT optional — null means "not the popular sort"
+export const galleryItemNoRank: GalleryItemDto = itemNoRank;
+
+export const galleryList: GalleryListResponse = {
+  items: [galleryItem],
+  nextCursor: null, // null == genuinely exhausted, not "this page was short"
+};
+
+// The listing is a keyed envelope, never a bare array.
+// @ts-expect-error a bare array is not a GalleryListResponse
+export const badGalleryList: GalleryListResponse = [galleryItem];
+
+export const publishGallery: PublishGalleryItemRequest = {
+  title: "In the beginning",
+  description: "",
+  scriptureReference: "GENESIS 1:1-4",
+  translation: "KJV",
+  visibility: "public",
+};
+
+// `scriptureBook` is derived server-side from the reference — never client-supplied.
+export const badPublishGallery: PublishGalleryItemRequest = {
+  ...publishGallery,
+  // @ts-expect-error scriptureBook is not part of the publish request
+  scriptureBook: "GEN",
+};
+
+export const firstBook: ScriptureBook = SCRIPTURE_BOOKS[0];
+export const isCode: boolean = isScriptureBookCode("1CO");
+// The deriver returns `string | null` at the TYPE level — the null branch is the
+// publish 422, so a caller cannot forget to handle it.
+export const derivedBook: string | null = deriveScriptureBook("1 Corinthians 13");
+// @ts-expect-error deriveScriptureBook may return null
+export const badDerivedBook: string = deriveScriptureBook("a poem");
