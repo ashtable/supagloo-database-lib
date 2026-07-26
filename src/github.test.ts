@@ -393,7 +393,7 @@ describe("mintInstallationToken — rate-limit handling (row 64)", () => {
     await expect(call).rejects.toBeInstanceOf(GithubAppError);
     await call.catch((err: GithubAppError) => {
       expect(err.code).toBe("RATE_LIMITED");
-      expect(err.status).toBe(403);
+      expect(err.upstreamStatus).toBe(403);
       expect(err.message).toContain("60");
       // The JWT-leak property of `:284-299` must survive the rewritten path.
       expect(err.message).not.toContain("Bearer");
@@ -419,7 +419,7 @@ describe("mintInstallationToken — rate-limit handling (row 64)", () => {
     await expect(call).rejects.toBeInstanceOf(GithubAppError);
     await call.catch((err: GithubAppError) => {
       expect(err.code).toBe("TOKEN_EXCHANGE_FAILED");
-      expect(err.status).toBe(403);
+      expect(err.upstreamStatus).toBe(403);
       expect(err.message).not.toContain("Bearer");
     });
     expect(n).toBe(1);
@@ -442,7 +442,7 @@ describe("mintInstallationToken — rate-limit handling (row 64)", () => {
       await expect(call).rejects.toBeInstanceOf(GithubAppError);
       await call.catch((err: GithubAppError) => {
         expect(err.code).toBe("TOKEN_EXCHANGE_FAILED");
-        expect(err.status).toBe(status);
+        expect(err.upstreamStatus).toBe(status);
       });
       expect(n).toBe(1);
       expect(sleepImpl).not.toHaveBeenCalled();
@@ -468,7 +468,7 @@ describe("mintInstallationToken — rate-limit handling (row 64)", () => {
     await expect(call).rejects.toBeInstanceOf(GithubAppError);
     await call.catch((err: GithubAppError) => {
       expect(err.code).toBe("TOKEN_EXCHANGE_FAILED");
-      expect(err.status).toBe(502);
+      expect(err.upstreamStatus).toBe(502);
     });
     expect(n).toBe(2);
   });
@@ -492,5 +492,41 @@ describe("mintInstallationToken — rate-limit handling (row 64)", () => {
     // No throttle headers => the exponential fallback, 500 then 1000.
     expect(sleepImpl.mock.calls).toEqual([[500], [1_000]]);
     expect(result.token).toBe("ghs_stub_inst_42_1");
+  });
+
+  it("carries the upstream status as `upstreamStatus` and NEVER as `status` (Fastify trap)", async () => {
+    // Fastify's default error handler prefers `error.status` over `error.statusCode`
+    // (`fastify/lib/error-handler.js` `setErrorHeaders`: `if (error.status >= 400)
+    // statusCode = error.status`, checked BEFORE the `statusCode` branch). A field on a
+    // thrown error literally named `status` therefore becomes the HTTP reply code of
+    // whatever route the throw escapes through.
+    //
+    // `mintInstallationToken` throws uncaught out of the API's `listInstallationRepos`
+    // AND `getRepositoryFileContents`, i.e. out of BOTH `GET /v1/github/repos` and
+    // `GET /v1/projects/:id/manifest`. With a field named `status`, a GitHub 401 on the
+    // token exchange (our App credential is wrong / the install was revoked) replied
+    // **401 to the browser** — telling the caller to re-authenticate, indistinguishable
+    // from a real session expiry, when the caller's session was fine and OURS was
+    // broken. A 404 likewise became a spurious "not found".
+    //
+    // The upstream value therefore lives under a name Fastify does not consume. Same
+    // name, for the same reason, as the API's `GithubAppRequestError.upstreamStatus`
+    // and `RepoCreationError.upstreamStatus`. This is a WIRE-LEVEL contract, not a
+    // cosmetic one: if anyone renames it back, this assertion is what stops them.
+    for (const status of [401, 404, 500]) {
+      const call = mintInstallationToken({
+        ...baseArgs,
+        sleepImpl: vi.fn(async () => {}),
+        maxAttempts: 1,
+        fetchImpl: fakeFetch(
+          () => new Response(JSON.stringify({ message: "nope" }), { status }),
+        ),
+      });
+      await expect(call).rejects.toBeInstanceOf(GithubAppError);
+      await call.catch((err: GithubAppError) => {
+        expect(err.upstreamStatus).toBe(status);
+        expect((err as unknown as { status?: number }).status).toBeUndefined();
+      });
+    }
   });
 });

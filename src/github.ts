@@ -46,24 +46,52 @@ export type GithubAppErrorCode = "TOKEN_EXCHANGE_FAILED" | "RATE_LIMITED";
 /**
  * Thrown when an installation-token exchange fails. Carries a machine-readable
  * {@link code} and, when the failure came from a GitHub response, the upstream
- * HTTP {@link status} so callers can classify it without re-parsing a message.
- * The message never includes the signed App JWT.
+ * HTTP {@link upstreamStatus} so callers can classify it without re-parsing a
+ * message. The message never includes the signed App JWT.
+ *
+ * **Why the upstream status is `upstreamStatus` and NOT `status`.** Fastify's default
+ * error handler prefers `error.status` over `error.statusCode`
+ * (`fastify/lib/error-handler.js`, `setErrorHeaders`: `if (error.status >= 400)
+ * statusCode = error.status`, tested BEFORE the `statusCode` branch). A field on a
+ * thrown error literally named `status` therefore becomes the HTTP reply code of
+ * whatever route the throw escapes through, and the API registers no
+ * `setErrorHandler` to intercept it.
+ *
+ * That is not hypothetical for this class: {@link mintInstallationToken} throws
+ * uncaught out of the API's `listInstallationRepos` AND `getRepositoryFileContents`,
+ * i.e. out of BOTH `GET /v1/github/repos` and `GET /v1/projects/:id/manifest`. Under
+ * the old field name a GitHub **401** on the token exchange (a wrong App credential, a
+ * revoked install) was replied as **our own 401** — which tells the caller *its* session
+ * is bad and to re-authenticate, an answer indistinguishable from a real expiry, when in
+ * fact the caller's session was fine and OUR credential was broken. A 404 likewise
+ * became a spurious "not found". Both are infrastructure faults misreported as caller
+ * faults.
+ *
+ * The upstream value therefore lives under a name Fastify does not consume. Same
+ * name, for the same reason, as the API's `GithubAppRequestError.upstreamStatus` and
+ * `RepoCreationError.upstreamStatus`. This is a wire-level contract; the named
+ * "Fastify trap" test in `github.test.ts` is what keeps it renamed.
+ *
+ * Deliberately NO `statusCode` here either: db-lib is transport-agnostic (DBOS
+ * consumes it too), so the API answers 502 at its own route boundaries rather than
+ * letting any provider error class dictate an HTTP status from inside a library.
  */
 export class GithubAppError extends Error {
   readonly code: GithubAppErrorCode;
 
-  /** Upstream HTTP status, when the failure was an HTTP response. */
-  readonly status?: number;
+  /** Upstream HTTP status, when the failure was an HTTP response. NEVER the status
+   *  the API replies — see the class doc-comment. */
+  readonly upstreamStatus?: number;
 
   constructor(
     code: GithubAppErrorCode,
     message: string,
-    options?: { cause?: unknown; status?: number },
+    options?: { cause?: unknown; upstreamStatus?: number },
   ) {
     super(message, options);
     this.name = "GithubAppError";
     this.code = code;
-    this.status = options?.status;
+    this.upstreamStatus = options?.upstreamStatus;
   }
 }
 
@@ -199,7 +227,8 @@ export interface InstallationToken {
  *
  * @throws {GithubAppError} `RATE_LIMITED` when a throttle never cleared within
  *   the attempt budget (the message carries GitHub's headers verbatim), else
- *   `TOKEN_EXCHANGE_FAILED`. Both carry the upstream `status`.
+ *   `TOKEN_EXCHANGE_FAILED`. Both carry the upstream status as `upstreamStatus`
+ *   (never `status` — see the {@link GithubAppError} doc-comment).
  */
 export async function mintInstallationToken(
   opts: MintInstallationTokenOptions,
@@ -240,7 +269,7 @@ export async function mintInstallationToken(
       } for installation ${opts.installationId}: ${res.status}${
         headerNote ? ` (${headerNote})` : ""
       }`,
-      { status: res.status },
+      { upstreamStatus: res.status },
     );
   }
 
