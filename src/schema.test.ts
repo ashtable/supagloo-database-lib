@@ -459,6 +459,50 @@ describe("Task #5 schema — schema-text introspection", () => {
     expect(schema).not.toMatch(/model\s+Composition\b/);
     expect(schema).not.toMatch(/model\s+Scene\b/);
   });
+
+  // -------------------------------------------------------------------------
+  // Task #39 — gallery sort indexes (plan D1). The gallery listing is the ONLY
+  // endpoint in the system that is not scoped to one user, so it cannot ride an
+  // existing ownerId/userId index. `sort=popular` is the DEFAULT order on a public,
+  // unauthenticated, crawlable page; without a composite index it is a full scan
+  // plus a sort on every anonymous page view. Plain ASCENDING composites are
+  // correct: Postgres scans a btree backwards, so `(visibility, upvoteCount, id)`
+  // serves `ORDER BY "upvoteCount" DESC, "id" DESC` AND the keyset predicate
+  // `("upvoteCount", "id") < ($k, $i)`. The trending expression contains `now` and
+  // is therefore deliberately NOT indexed (design-delta §2.7 defers a stored score).
+  // -------------------------------------------------------------------------
+
+  it("declares the two composite gallery sort indexes on GalleryItem (U-SI1)", () => {
+    const block = modelBlock("GalleryItem");
+    expect(block, "model GalleryItem should exist").toBeDefined();
+    expect(block as string).toMatch(
+      /@@index\(\[visibility, publishedAt, id\]\)/, // sort=newest
+    );
+    expect(block as string).toMatch(
+      /@@index\(\[visibility, upvoteCount, id\]\)/, // sort=popular (the default)
+    );
+  });
+
+  it("keeps the three pre-existing GalleryItem indexes (the sort indexes are ADDITIVE)", () => {
+    const block = modelBlock("GalleryItem") as string;
+    expect(block).toMatch(/@@index\(\[projectId\]\)/);
+    expect(block).toMatch(/@@index\(\[ownerId\]\)/);
+    expect(block).toMatch(/@@index\(\[scriptureBook\]\)/);
+  });
+
+  it("adds NO column to GalleryItem or GalleryUpvote (indexes only — U-SI2)", () => {
+    // The column-set assertions above are the primary guard; this pins the COUNT so
+    // an accidental column slipped in alongside the index migration fails loudly here
+    // too, with a message that says what happened.
+    expect(
+      scalarFields(Prisma.GalleryItemScalarFieldEnum).length,
+      "GalleryItem is a 16-column table; task #39 adds indexes, not columns",
+    ).toBe(16);
+    expect(
+      scalarFields(Prisma.GalleryUpvoteScalarFieldEnum).length,
+      "GalleryUpvote is a 4-column table; task #40 adds no column",
+    ).toBe(4);
+  });
 });
 
 describe("Task #5 schema — Composition/Scene absence (generated client)", () => {

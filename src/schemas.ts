@@ -1391,3 +1391,178 @@ export const RenderListQuerySchema = z.object({
   mine: z.literal("1"),
 });
 export type RenderListQuery = z.infer<typeof RenderListQuerySchema>;
+
+// ===========================================================================
+// Gallery WIRE DTOs (Tasks #39/#40 — design-delta §2.7/§6c/§8)
+// ---------------------------------------------------------------------------
+// The API<->BFF contract for the community gallery:
+//   POST   /v1/renders/:id/gallery      (publish; owner)
+//   DELETE /v1/gallery/:id              (un-publish; owner)
+//   GET    /v1/gallery                  (PUBLIC listing — optional auth)
+//   GET    /v1/gallery/:id              (PUBLIC item — optional auth)
+//   GET    /v1/gallery/:id/stream-url   (PUBLIC presign; reuses
+//                                        FilePresignDownloadResponseSchema)
+//   POST   /v1/gallery/:id/upvote  ·  DELETE /v1/gallery/:id/upvote  (auth)
+//
+// Naming: `GalleryItem` and `GalleryUpvote` are generated Prisma model TYPES
+// re-exported by `export * from "./generated/prisma/client"`, so the wire type takes
+// the `*Dto` suffix (the `RenderJobDto` / `ProjectDto` rule) — a same-named wire type
+// would be silently dropped from the barrel.
+//
+// Deliberate DTO omissions, each load-bearing:
+//   - `videoAssetKey` is NOT on the DTO. A public consumer must go through
+//     `stream-url`; handing out the raw key invites clients to guess sibling keys.
+//   - `ownerId` is NOT on the DTO; `owner.{displayName, avatarInitials}` is. Exposing
+//     an internal user id on an unauthenticated endpoint is gratuitous.
+//     KNOWN DESIGN GAP: the wireframe's `@handle` has no column — `displayName` is the
+//     honest stand-in until the design adds one.
+//   - `viewCount` is NOT on the DTO. The column exists (design-delta §2.7) but §8
+//     defines no endpoint that increments or exposes it, and shipping a field that is
+//     always 0 is a lie. Recorded as a known gap, not an oversight.
+//
+// Dates are ISO-8601 strings. `nextCursor` is `string | null` — see the cursor
+// contract on GalleryListResponseSchema.
+// ===========================================================================
+
+/** Gallery listing order. A CLOSED enum because the API selects its ORDER BY key
+ *  expression from a fixed map keyed by this value — the request string never reaches
+ *  the SQL. `popular` is the default (design-delta §2.7); `trending` is computed at
+ *  query time from `upvoteCount` + `publishedAt` with an injected `now`. */
+export const GallerySortSchema = z.enum(["popular", "newest", "trending"]);
+export type GallerySort = z.infer<typeof GallerySortSchema>;
+
+/** `POST /v1/renders/:id/gallery` request body (design-delta §6c).
+ *
+ *  The render comes from the path. `scriptureReference` + `translation` are CLIENT-
+ *  supplied because the server does not have them: `RenderJob` carries neither, and
+ *  reading the repo manifest would put real GitHub egress into what §7 calls "a single
+ *  Postgres insert". The studio already holds both values, so the UI sends them with no
+ *  extra fetch.
+ *
+ *  Everything else is SERVER-derived and deliberately absent here:
+ *  `scriptureBook` (via `deriveScriptureBook`, a null derivation is a 422),
+ *  `durationSeconds` (`max(1, round(framesTotal / fps))` — letting the client claim a
+ *  duration would let the `mm:ss` badge lie about its own video), and both asset keys
+ *  (recomputed from `buildRenderOutputKey`/`buildRenderThumbnailKey`, never trusted
+ *  from the client).
+ *
+ *  `description` defaults to `""` and `visibility` to `"public"` because both columns
+ *  are non-null with no DB default.
+ *
+ *  `title` and `scriptureReference` are TRIMMED BEFORE the length checks, so a
+ *  whitespace-only value is a 400 rather than an invisible title on a public card, and
+ *  the stored value never carries incidental padding. Both are single-line display
+ *  strings that this schema alone owns; `translation` is left to the shared
+ *  `TranslationSchema` so there is still exactly one translation contract. */
+export const PublishGalleryItemRequestSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  description: z.string().max(1000).default(""),
+  scriptureReference: z.string().trim().min(1).max(120),
+  translation: TranslationSchema,
+  visibility: GalleryVisibilitySchema.default("public"),
+});
+export type PublishGalleryItemRequest = z.infer<
+  typeof PublishGalleryItemRequestSchema
+>;
+
+/** A `GalleryItem` on the wire — the card contract for the Turn-15 grid.
+ *
+ *  `scriptureBook` is the derived USFM code (`deriveScriptureBook`); for a multi-book
+ *  reference it is the FIRST recognized book, while `scriptureReference` still renders
+ *  verbatim on the card — so only the filter is coarsened, never the display.
+ *
+ *  `rank` is 1-based, CONTINUOUS ACROSS PAGES (page 2 of a 24-item page starts at 25),
+ *  and non-null ONLY under `sort=popular`: rank is a property of the global popular
+ *  ordering, so a client computing `index + 1` would badge the 25th item "#1", and a
+ *  "#7" badge under a different ordering would assert something untrue. The `rank <= 3`
+ *  threshold and the trophy-at-1 rule are PRESENTATION and live in the UI.
+ *
+ *  `viewerHasUpvoted` is false for an anonymous viewer (no query is issued at all).
+ *  `thumbnailUrl` is a short-lived presigned GET URL (the anonymous grid cannot use the
+ *  auth-scoped `GET /v1/files/presign-download`), and is null when it cannot be signed. */
+export const GalleryItemDtoSchema = z.object({
+  id: z.string(),
+  renderJobId: z.string(),
+  projectId: z.string(),
+  title: z.string(),
+  description: z.string(),
+  scriptureReference: z.string(),
+  scriptureBook: z.string(),
+  translation: TranslationSchema,
+  durationSeconds: z.number().int(),
+  visibility: GalleryVisibilitySchema,
+  publishedAt: z.string(),
+  upvoteCount: z.number().int(),
+  thumbnailUrl: z.string().nullable(),
+  rank: z.number().int().nullable(),
+  viewerHasUpvoted: z.boolean(),
+  owner: z.object({
+    displayName: z.string(),
+    avatarInitials: z.string(),
+  }),
+});
+export type GalleryItemDto = z.infer<typeof GalleryItemDtoSchema>;
+
+/** `POST /v1/renders/:id/gallery` (201), `GET /v1/gallery/:id`, and both upvote
+ *  routes. The vote routes return the CURRENT item — count and `viewerHasUpvoted`
+ *  re-read after the transaction — so the UI reconciles its optimistic update against
+ *  server truth in one round trip. */
+export const GalleryItemResponseSchema = z.object({
+  item: GalleryItemDtoSchema,
+});
+export type GalleryItemResponse = z.infer<typeof GalleryItemResponseSchema>;
+
+/** `GET /v1/gallery` response. Keyed envelope, never a bare array.
+ *
+ *  `nextCursor` is the WHOLE pagination contract: the service fetches `pageSize + 1`
+ *  rows and mints a cursor only if the extra row existed, so `null` means GENUINELY
+ *  EXHAUSTED — not "this page was short" — which is what lets the UI hide "Load more"
+ *  honestly. There is deliberately NO `hasMore` (a second field that can disagree with
+ *  `nextCursor`) and NO `total` (a `COUNT(*)` on every public listing, for a number the
+ *  design never renders). The cursor is opaque: it carries ordering coordinates only —
+ *  no secret and no authorization — so it is not signed, and its shape may change
+ *  without a wire break. */
+export const GalleryListResponseSchema = z.object({
+  items: z.array(GalleryItemDtoSchema),
+  nextCursor: z.string().nullable(),
+});
+export type GalleryListResponse = z.infer<typeof GalleryListResponseSchema>;
+
+/** `GET /v1/gallery` querystring.
+ *
+ *  There is NO client `limit`: the design names none, and an unbounded limit on a
+ *  public, unauthenticated endpoint is a trivial DoS. Page size is a service constant.
+ *
+ *  `book` and `q` accept an empty/blank value (a UI that always appends the parameter
+ *  must not get a 400); the service treats blank as ABSENT — a blank `q` must never
+ *  become a `%%` match-everything predicate. `q` is escaped for `LIKE` server-side.
+ *
+ *  `cursor` is validated by the service's cursor codec, not here: shape alone cannot
+ *  tell a valid cursor from a forged one, so every cursor rejection shares ONE error
+ *  path (400 `invalid_cursor`) instead of splitting between a Zod 400 and a service
+ *  400. A cursor minted under a different `sort` is rejected rather than silently
+ *  reset — honouring it would page a DIFFERENT ordering and skip or duplicate rows. */
+export const GalleryListQuerySchema = z.object({
+  sort: GallerySortSchema.default("popular"),
+  book: z.string().optional(),
+  q: z.string().optional(),
+  cursor: z.string().optional(),
+});
+export type GalleryListQuery = z.infer<typeof GalleryListQuerySchema>;
+
+/** `:id` path param for every `/v1/gallery/:id*` route (the publish route is
+ *  render-scoped and reuses `RenderIdParamSchema`). */
+export const GalleryIdParamSchema = z.object({
+  id: z.string().min(1),
+});
+export type GalleryIdParam = z.infer<typeof GalleryIdParamSchema>;
+
+/** `DELETE /v1/gallery/:id` response — `200 { ok: true }`, matching the
+ *  `DELETE /v1/projects/:id` precedent rather than a 204. Deleting cascades the item's
+ *  `GalleryUpvote` rows and frees the `renderJobId` unique slot, so a render can be
+ *  un-published and re-published. The S3 objects are NOT deleted (that is the cleanup
+ *  workflow's job). */
+export const GalleryDeleteResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type GalleryDeleteResponse = z.infer<typeof GalleryDeleteResponseSchema>;

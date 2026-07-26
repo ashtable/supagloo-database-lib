@@ -314,6 +314,15 @@ model GalleryItem {
   @@index([projectId])
   @@index([ownerId])
   @@index([scriptureBook])
+  // Task #39 — composite sort indexes for the PUBLIC listing, the only endpoint in the
+  // system not scoped to one user (every other list narrows by ownerId/userId and rides
+  // an index above). Plain ASCENDING composites are correct: Postgres scans a btree
+  // backwards, so these serve `ORDER BY <key> DESC, "id" DESC` AND the keyset
+  // pagination predicate `(<key>, "id") < ($k, $i)`. The `trending` expression contains
+  // `now`, so it is not indexable without a stored score column — design-delta §2.7
+  // explicitly defers that.
+  @@index([visibility, publishedAt, id]) // sort=newest
+  @@index([visibility, upvoteCount, id]) // sort=popular (the DEFAULT sort)
 }
 
 model GalleryUpvote {
