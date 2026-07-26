@@ -180,7 +180,7 @@ export const badGalleryItem: GalleryItemDto = { ...galleryItem, visibility: "pri
 // lane catches the loosening too, not only the runtime omit-loop in src/schemas.test.ts.
 // The four chosen are the ones a `select` most plausibly drops.
 const { scriptureBook: _dropBook, ...itemNoBook } = galleryItem;
-// @ts-expect-error scriptureBook is REQUIRED — it drives the public book facet
+// @ts-expect-error scriptureBook is REQUIRED — a non-null column on every card DTO
 export const galleryItemNoBook: GalleryItemDto = itemNoBook;
 
 const { publishedAt: _dropPublishedAt, ...itemNoPublishedAt } = galleryItem;

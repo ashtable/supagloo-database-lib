@@ -19,7 +19,7 @@ import {
 //
 // THE ASYMMETRY THAT SHAPES EVERY TEST HERE: a `null` derivation is a loud,
 // client-fixable 422; a WRONG derivation is a silent, permanent mis-file of a public
-// gallery item into the wrong facet. So the false-positive tests (the "prose must not
+// gallery item under the wrong book code. So the false-positive tests (the "prose must not
 // resolve" block) are as load-bearing as the happy path, and several of them exist
 // because a mutation audit caught the module returning a real book code for real
 // English prose.
@@ -34,7 +34,7 @@ function phrasesOf(book: (typeof SCRIPTURE_BOOKS)[number]): string[] {
 // ---------------------------------------------------------------------------
 
 describe("Task #39 scripture-book — SCRIPTURE_BOOKS table (U-SB1)", () => {
-  it("lists exactly the 66 books of the protestant canon", () => {
+  it("lists exactly the 66 book codes the normalizer recognizes", () => {
     expect(SCRIPTURE_BOOKS).toHaveLength(66);
   });
 
@@ -57,7 +57,7 @@ describe("Task #39 scripture-book — SCRIPTURE_BOOKS table (U-SB1)", () => {
     }
   });
 
-  it("keeps canonical order — Genesis first, Malachi at 39, Revelation last", () => {
+  it("keeps conventional order — Genesis first, Malachi at 39, Revelation last", () => {
     expect(SCRIPTURE_BOOKS[0]?.code).toBe("GEN");
     expect(SCRIPTURE_BOOKS[38]?.code).toBe("MAL");
     expect(SCRIPTURE_BOOKS[39]?.code).toBe("MAT");
@@ -126,7 +126,7 @@ describe("Task #39 scripture-book — SCRIPTURE_BOOKS table (U-SB1)", () => {
 // U-SB1b — EVERY book resolves from a LITERAL, hand-written human reference
 // ---------------------------------------------------------------------------
 
-// Written out by hand, one per canonical book, NOT derived from SCRIPTURE_BOOKS.
+// Written out by hand, one per recognized book, NOT derived from SCRIPTURE_BOOKS.
 // This is the only test in the file that can catch a typo in the table itself: a
 // generated assertion (`deriveScriptureBook(book.name)` === book.code) is satisfied by
 // a misspelled name, because it looks the misspelling up in the same misspelled table.
@@ -209,7 +209,7 @@ describe("Task #39 scripture-book — every book from a LITERAL reference (U-SB1
     },
   );
 
-  it("covers all 66 canonical codes exactly once (so a new book cannot skip the list)", () => {
+  it("covers all 66 recognized codes exactly once (so a new book cannot skip the list)", () => {
     const literalCodes = LITERAL_REFERENCES.map(([, code]) => code);
     expect(literalCodes).toHaveLength(66);
     expect(new Set(literalCodes).size).toBe(66);
@@ -361,8 +361,8 @@ describe("Task #39 scripture-book — numeric prefix folding (U-SB5)", () => {
   });
 
   // The ORDINAL-SUFFIX spelling. Before this was folded, "1st John 4:8" derived JHN —
-  // a WRONG non-null code written to a non-null column that drives a public
-  // single-select facet, i.e. exactly the silent mis-file the module trades recall to
+  // a WRONG non-null code written to the non-null column of a public
+  // gallery item, i.e. exactly the silent mis-file the module trades recall to
   // avoid. It mis-filed rather than merely degrading because JOHN is the only bare book
   // name left standing once the unrecognized "1ST" token is skipped.
   it("folds the ordinal-suffix spelling (1st / 2nd / 3rd), which used to mis-file as JOHN", () => {
@@ -488,9 +488,9 @@ describe("Task #39 scripture-book — multi-book -> first book (U-SB7)", () => {
   // ROM and "Genesis - Exodus" was GEN. Both are now null -> a loud 422. That is the
   // price of closing W1: the same form (c) that accepted them also accepted every
   // "<book><joiner><book>" string ("Ho, Ho, Ho" -> HOS), which is a SILENT, permanent
-  // mis-file of a public facet. A chapter-free book range is an unusual way to fill
+  // mis-file of a public gallery item. A chapter-free book range is an unusual way to fill
   // `scriptureReference`, the 422 names the reference, and the client can write
-  // "Romans 1 - Ephesians 6"; a wrong facet cannot be recovered at all. D6 requires
+  // "Romans 1 - Ephesians 6"; a wrong code cannot be recovered at all. D6 requires
   // multi-book -> FIRST book, which still holds for every reference that reaches a
   // chapter number.
   it("rejects a join that never reaches a chapter, and a join with no second book", () => {
@@ -502,7 +502,7 @@ describe("Task #39 scripture-book — multi-book -> first book (U-SB7)", () => {
     expect(deriveScriptureBook("Luke and John")).toBeNull();
     // ...while form (c) itself stays alive and load-bearing: once the chain reaches a
     // chapter, a chapter-less FIRST segment still wins. Deleting form (c) instead of
-    // tightening it would answer EXO / LEV here — a wrong facet, strictly worse than the
+    // tightening it would answer EXO / LEV here — a wrong code, strictly worse than the
     // 422 above. The third case is why the chain is WALKED rather than probed one step:
     // a one-step rule answers EXO for it.
     expect(deriveScriptureBook("Genesis - Exodus 1:1")).toBe("GEN");
@@ -524,7 +524,7 @@ describe("Task #39 scripture-book — multi-book -> first book (U-SB7)", () => {
   // *** FIXED IN THIS PASS, found by the regression sweep rather than by the audit ***
   // Two references written with NO separator between them. The chapter number of the
   // first was not "properly terminated" (a space then a word), so the first book was
-  // REJECTED and the scan walked on to answer the SECOND book — a silent wrong facet, and
+  // REJECTED and the scan walked on to answer the SECOND book — a silent wrong code, and
   // a direct violation of D6's multi-book -> FIRST book. A following BOOK now terminates a
   // chapter number, so the first book wins. The fix is deliberately narrow: only a
   // recognized BOOK opens this door, never any word, which is what keeps the W4 pins
@@ -542,7 +542,7 @@ describe("Task #39 scripture-book — multi-book -> first book (U-SB7)", () => {
   it("a leading non-book word does not hand the reference to a LATER book", () => {
     // The plan's rule is FIRST RECOGNIZED BOOK. An anchoring rule that only allowed a
     // match at position 0 (or after a separator) would make GENESIS unreachable here
-    // and answer EXO — a wrong facet, which is worse than a 422.
+    // and answer EXO — a wrong code, which is worse than a 422.
     expect(deriveScriptureBook("Read Genesis 1:1, Exodus 2:2")).toBe("GEN");
     expect(deriveScriptureBook("See John 3:16")).toBe("JHN");
   });
@@ -587,7 +587,7 @@ describe("Task #39 scripture-book — prose is not a reference (U-SB7b)", () => 
   // form (c) of the shape rule only asked "is another book named after this joiner", and
   // a REPEATED one-word alias answers yes. Every string here is prose that derived a
   // real book code on the built module before this pass; each is a permanent mis-file of
-  // a public gallery facet, so each gets its own assertion. What closes all ten is that
+  // a public gallery item, so each gets its own assertion. What closes all ten is that
   // a joiner must now reach a CHAPTER NUMBER, and none of these has one anywhere.
   it.each([
     ["Ho, Ho, Ho", "HOS"],
@@ -621,7 +621,7 @@ describe("Task #39 scripture-book — prose is not a reference (U-SB7b)", () => 
   // The OTHER rule that was tried and rejected — "the joined book must be a DIFFERENT
   // book" — is pinned here by its victim. With "1 JOHN" refused at position 0 for joining
   // back onto itself, the scan fell through to the bare JOHN at index 2, whose join onto
-  // 1JN then looked like a different book, and answered JHN: a CROSS-BOOK wrong facet,
+  // 1JN then looked like a different book, and answered JHN: a CROSS-BOOK wrong code,
   // the "1st John" mis-file family reopened. Under the shipped rule the chain never
   // reaches a chapter, so nothing resolves and nothing mis-files.
   it("never lets an ordinal book fall through to its bare name (the 1 John trap)", () => {
@@ -689,7 +689,7 @@ describe("Task #39 scripture-book — token-boundary guards (U-SB7c)", () => {
   // The `1st John` mis-file family, third direction. "1 JOHN" is a match phrase, so the
   // ordinal normally wins by longest-match — but when the digit is glued to a letter the
   // start guard refuses "1 JOHN", and the bare JOHN two characters on used to win: JHN, a
-  // cross-book wrong facet. A bare name may no longer start immediately after "<digit> "
+  // cross-book wrong code. A bare name may no longer start immediately after "<digit> "
   // when "<digit> <name>" is itself a phrase.
   it("a bare book name never wins as the TAIL of an unreachable ordinal name", () => {
     expect(deriveScriptureBook("x1 john 1:1")).toBeNull(); // was JHN
@@ -1169,7 +1169,7 @@ describe("Task #39 scripture-book — the separator never decides the answer (U-
   // the narrowing takes away nothing that used to work. Removing the narrowing would close
   // them, and that trade is refused on purpose: `<book> <n> <n> <book> <ch>` is a shape
   // neither English nor a reference produces, while `<book> <n> <n>` IS a prose shape
-  // ("Job 30 000"), and prose in a public facet is the outcome this module exists to prevent.
+  // ("Job 30 000"), and prose in the stored code is the outcome this module exists to prevent.
   it("pins the narrowing's PRICE: a second bare number breaks the chain (accepted)", () => {
     expect(deriveScriptureBook("Genesis 23 1 Exodus 3:16")).toBe("EXO");
     expect(deriveScriptureBook("Genesis 23 1 Exodus")).toBeNull();
@@ -1205,7 +1205,7 @@ describe("Task #39 scripture-book — the separator never decides the answer (U-
 // ---------------------------------------------------------------------------
 
 describe("Task #39 scripture-book — unrecognized -> null (U-SB8)", () => {
-  it("returns null for empty, whitespace, punctuation and non-canonical text", () => {
+  it("returns null for empty, whitespace, punctuation and unrecognized text", () => {
     for (const ref of [
       "",
       "   ",
@@ -1236,7 +1236,7 @@ describe("Task #39 scripture-book — unrecognized -> null (U-SB8)", () => {
     expect(deriveScriptureBook("I. Corinthians 13")).toBe("1CO");
     expect(deriveScriptureBook("1st Corinthians 13")).toBe("1CO");
     // Required: without a number there is no honest answer. 1CO and 2CO are different
-    // books and the column is a single-select facet, so guessing one would mis-file
+    // books and the column holds a single value, so guessing one would mis-file
     // half the time. Null -> 422 -> the client adds the number.
     expect(deriveScriptureBook("Corinthians 13:4")).toBeNull();
     expect(deriveScriptureBook("Corinthians")).toBeNull();
@@ -1269,7 +1269,7 @@ describe("Task #39 scripture-book — unrecognized -> null (U-SB8)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Task #39 scripture-book — isScriptureBookCode (U-SB9)", () => {
-  it("accepts every canonical code", () => {
+  it("accepts every recognized code", () => {
     for (const book of SCRIPTURE_BOOKS) {
       expect(isScriptureBookCode(book.code), book.code).toBe(true);
     }

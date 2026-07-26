@@ -630,24 +630,22 @@ describe("Tasks #39/#40 schemas — GalleryListQuerySchema (U-GS1)", () => {
   it("defaults sort to `popular` (the design's default listing order)", () => {
     const parsed = S.GalleryListQuerySchema.parse({});
     expect(parsed.sort).toBe("popular");
-    expect(parsed.book).toBeUndefined();
     expect(parsed.q).toBeUndefined();
     expect(parsed.cursor).toBeUndefined();
   });
 
-  it("accepts each sort and the book/q/cursor filters", () => {
+  it("accepts each sort and the q/cursor params — and NOTHING else", () => {
     for (const sort of ["popular", "newest", "trending"] as const) {
       expect(S.GalleryListQuerySchema.parse({ sort }).sort).toBe(sort);
     }
     const parsed = S.GalleryListQuerySchema.parse({
       sort: "newest",
-      book: "GEN",
       q: "creation",
       cursor: "eyJzIjoibmV3ZXN0In0",
     });
+    // Exhaustive on purpose: the query surface is exactly these three keys.
     expect(parsed).toEqual({
       sort: "newest",
-      book: "GEN",
       q: "creation",
       cursor: "eyJzIjoibmV3ZXN0In0",
     });
@@ -665,10 +663,18 @@ describe("Tasks #39/#40 schemas — GalleryListQuerySchema (U-GS1)", () => {
     expect("limit" in parsed).toBe(false);
   });
 
-  it("accepts an EMPTY book/q (the service treats blank as absent, never as a `%%` match)", () => {
-    const parsed = S.GalleryListQuerySchema.parse({ book: "", q: "   " });
-    expect(parsed.book).toBe("");
-    expect(parsed.q).toBe("   ");
+  it("declares NO `book` filter (the gallery is not filterable by book — book membership is a property of the TRANSLATION, YouVersion's authority, not ours)", () => {
+    const parsed = S.GalleryListQuerySchema.parse({
+      sort: "newest",
+      book: "GEN",
+    }) as Record<string, unknown>;
+    expect("book" in parsed).toBe(false);
+    expect(parsed).toEqual({ sort: "newest" });
+  });
+
+  it("accepts an EMPTY `q` (the service treats blank as absent, never as a `%%` match)", () => {
+    expect(S.GalleryListQuerySchema.parse({ q: "" }).q).toBe("");
+    expect(S.GalleryListQuerySchema.parse({ q: "   " }).q).toBe("   ");
   });
 });
 

@@ -1,13 +1,21 @@
 /**
  * Shared scripture book-code derivation (design-delta §2.7, plan task #39 D6).
  *
- * `GalleryItem.scriptureBook` is a NON-NULL column that drives the gallery's
- * single-select book filter, but nothing in the platform produces it: the studio
- * carries a free-text `scriptureReference` written by a human. This module is the one
- * place that turns the second into the first, so the API (publish + the `book=` query
- * filter) and any future consumer normalize identically. It lives in `database-lib`
+ * `GalleryItem.scriptureBook` is a NON-NULL column, but nothing in the platform
+ * produces it: the studio carries a free-text `scriptureReference` written by a human.
+ * This module is the one place that turns the second into the first, so the publish
+ * endpoint and any future consumer normalize identically. It lives in `database-lib`
  * for the same reason `s3-keys.ts` and `semver.ts` do: one implementation, imported by
  * every service.
+ *
+ * WHAT `SCRIPTURE_BOOKS` IS — AND WHAT IT IS NOT. It is the set of book codes THIS
+ * NORMALIZER CAN RECOGNIZE: the match vocabulary of {@link deriveScriptureBook}, used
+ * only to populate the internal `scriptureBook` column. It is NOT a claim about which
+ * books exist. WHICH BOOKS EXIST IS A PROPERTY OF THE TRANSLATION and the YouVersion
+ * API is the authority on that — it varies per translation — so nothing here may be
+ * read as this repo owning a canon. This module is a best-effort reference-string
+ * normalizer with NO UI SURFACE: nothing filters or facets on the derived code (the
+ * gallery listing offers sort + free-text search only).
  *
  * References arrive in TWO shapes and both must work:
  *   - human   — `"Genesis 1:1"`, `"PSALM 23:2"`, `"GENESIS 1:1–4"`, `"1 Corinthians 13"`
@@ -27,7 +35,7 @@
  *      (THE REFERENCE-SHAPE RULE, below).
  *   4. Return the code, or `null`.
  *
- * THE REFERENCE-SHAPE RULE — the guard that keeps English prose out of a public facet.
+ * THE REFERENCE-SHAPE RULE — the guard that keeps English prose out of the stored code.
  * Many of these names and aliases are also ordinary English words (`JOB`, `SONG`,
  * `PSALM`, `HO`, `PS`, `MT`, `AMOS`), so "a book name appears somewhere in the string"
  * is nowhere near enough — it derives SNG for `"a song about hope"` and MAT for
@@ -55,12 +63,12 @@
  *
  * WHY FORM (c) DEMANDS A CHAPTER FROM THE JOINED SEGMENT, and what that costs. Form (c)
  * exists to keep first-book-wins on a range whose FIRST segment has no chapter: without
- * it `"Genesis - Exodus 1:1"` answers EXO — a wrong facet, strictly worse than a 422. But
+ * it `"Genesis - Exodus 1:1"` answers EXO — a wrong code, strictly worse than a 422. But
  * asking only "is another book named after this joiner" is a shape ordinary English hits
  * constantly by repeating one word: `"Ho, Ho, Ho"`, `"Job, Job"`, `"Song, Song"` and
- * `"PS, PS"` each named a book, a joiner and a book, and each derived a real code into a
- * public facet. Demanding that the joined chain REACH a chapter number is what separates
- * a real cross-book range from a repeated noun. Two cheaper rules were tried and
+ * `"PS, PS"` each named a book, a joiner and a book, and each derived a real code onto a
+ * public gallery item. Demanding that the joined chain REACH a chapter number is what
+ * separates a real cross-book range from a repeated noun. Two cheaper rules were tried and
  * rejected — see {@link joinsAnotherReference}, where both are recorded, including the
  * one that re-opened the `"1st John"` CROSS-BOOK mis-file family.
  *
@@ -103,18 +111,19 @@
  *     `"MT2"` IS Matthew 2. Nothing else is a plausible `scriptureReference`.
  *
  * MULTI-BOOK REFERENCES COLLAPSE TO THEIR FIRST BOOK. `"Genesis 1:1 – Exodus 2:2"`
- * derives `GEN`. The column is a single value driving a single-select facet and the
- * design has no multi-book concept; rejecting the publish would block a legitimate
- * cross-book video and a `MULTI` pseudo-code would put a non-book into a public facet.
+ * derives `GEN`. The column holds a single value and the design has no multi-book
+ * concept; rejecting the publish would block a legitimate cross-book video and a
+ * `MULTI` pseudo-code would put a non-book code on a public gallery item.
  * Nothing is lost visually — the card renders `scriptureReference` verbatim, so only
- * the FILTER is coarsened to the first book. Note that "first" means first in the
+ * the DERIVED CODE is coarsened to the first book. Note that "first" means first in the
  * STRING, not "first after some anchor": `"Read Genesis 1:1, Exodus 2:2"` is GEN, not
  * EXO. An anchoring rule that only allowed a match at position 0 (or after a joiner)
- * would answer EXO here — a wrong facet, which is strictly worse than a 422.
+ * would answer EXO here — a wrong code, which is strictly worse than a 422.
  *
  * UNRECOGNIZED / EMPTY DERIVES `null`, and the publish endpoint answers
- * **422 `scripture_book_underivable`**. An `UNKNOWN` sentinel would be junk in a public
- * facet and silently dropping the item from the filter is a worse lie.
+ * **422 `scripture_book_underivable`**. An `UNKNOWN` sentinel would be junk in a
+ * non-null column on a public item; the 422 names the offending value and the client
+ * can fix it.
  *
  * THE SEPARATOR NEVER DECIDES THE ANSWER (W6, closed 2026-07-26 — the last known mis-file
  * class in this module). Form (c) used to enumerate its joiners, and a chapter-free first
@@ -154,7 +163,7 @@
  * Every function here is pure: no environment read, no clock read, no I/O.
  */
 
-/** One canonical book: its USFM code, its normalized full name, and the curated
+/** One recognized book: its USFM code, its normalized full name, and the curated
  *  alternate spellings that resolve to it. `name` and `aliases` are MATCH phrases in
  *  normalized (uppercase) form — they are not display labels. */
 export interface ScriptureBook {
@@ -164,7 +173,9 @@ export interface ScriptureBook {
 }
 
 /**
- * The 66 books of the protestant canon in canonical order, keyed by USFM code.
+ * The 66 book codes this normalizer recognizes, in conventional order, keyed by USFM
+ * code. A MATCH VOCABULARY, not a canon: which books a given translation contains is
+ * YouVersion's to answer, not this table's (see the module header).
  * Numeric prefixes are stored in DIGIT form (`"1 CORINTHIANS"`); the `I`/`II`/`III`
  * and `FIRST`/`SECOND`/`THIRD` spellings are folded onto digits during normalization,
  * and the space-less/spaced variants (`"1CORINTHIANS"` / `"1 CO"`) are derived
@@ -272,8 +283,8 @@ const BOOK_CODES: ReadonlySet<string> = new Set(SCRIPTURE_BOOKS.map((b) => b.cod
  *
  *  The ORDINAL-SUFFIX forms are here because without them `"1st John 4:8"` derived
  *  `JHN`: the unrecognized `1ST` token was skipped and the bare `JOHN` behind it won.
- *  A wrong non-null code is written straight to a non-null column that drives a public
- *  single-select facet, so this is the one mis-file class the module cannot tolerate.
+ *  A wrong non-null code is written straight to the non-null column of a public gallery
+ *  item, so this is the one mis-file class the module cannot tolerate.
  *  (`1st Corinthians` merely degraded to null — a loud 422 — because no bare
  *  `CORINTHIANS` phrase exists; the John family is the family that mis-filed.) */
 const NUMERIC_PREFIXES: Readonly<Record<string, string>> = {
@@ -377,7 +388,7 @@ const PHRASE_SET: ReadonlySet<string> = new Set(MATCH_PHRASES.map((p) => p.phras
  *  phrase, so `"1 John 4:8"` resolves to 1JN by longest-match — but only while the ordinal
  *  phrase can match at all. In `"X1 JOHN 1:1"` the digit is glued to a letter, so the
  *  start-boundary guard refuses `"1 JOHN"`, and the bare `JOHN` two characters later wins:
- *  JHN, a CROSS-BOOK wrong facet in a non-null public facet. (The same family produced
+ *  JHN, a CROSS-BOOK wrong code in a non-null column on a public item. (The same family produced
  *  `"1st John"` -> JHN before {@link NUMERIC_PREFIXES}, and `"1GEN 1:1"` -> GEN before the
  *  digit half of {@link startsAtTokenBoundary}.)
  *
@@ -497,7 +508,7 @@ function skipPossessive(text: string, index: number): number {
  *  this pass (the narrowing takes nothing away that used to work). Dropping the narrowing
  *  would close them, and that trade is refused deliberately: `"<book> <n> <n> <book> <ch>"`
  *  is not a shape English or a reference produces, while `"<book> <n> <n>"` IS a prose shape,
- *  and keeping prose out of a public facet is what this module is for. Two references written
+ *  and keeping prose out of the stored code is what this module is for. Two references written
  *  with no separator at all still work, because the joiner-onto-a-BOOK branch above is not
  *  narrowed: `"Psalm 23 1 John 3:16"` is PSA. */
 function joinsAnotherSegment(text: string, index: number): boolean {
@@ -524,7 +535,7 @@ function hasChapterTail(text: string, end: number): boolean {
   if (joinsAnotherSegment(text, after)) return true;
   // A following BOOK terminates the number too. `"PSALM 23 JOHN 3:16"` is two references
   // written with no separator between them; before this, PSALM was REJECTED here and the
-  // scan walked on to answer JHN — the SECOND book, i.e. a wrong facet, which is the one
+  // scan walked on to answer JHN — the SECOND book, i.e. a wrong code, which is the one
   // outcome this module must never produce (D6: multi-book -> FIRST book). A following
   // WORD still does not terminate a number, so `"PSALM 23 KJV"` stays null and
   // `"PS I love you"` (normalized `"PS 1 LOVE YOU"`) cannot use this door: only a
@@ -544,7 +555,7 @@ function hasChapterTail(text: string, end: number): boolean {
  *  The original form (c) asked only "is another book named after this joiner", and that
  *  is the weakness a residual audit shot down: English repeats one word constantly, so
  *  `"Ho, Ho, Ho"`, `"Job, Job"`, `"Song, Song"` and `"PS, PS"` all read as
- *  book-joiner-book and all derived a real code into a public facet. Requiring the joined
+ *  book-joiner-book and all derived a real code onto a public gallery item. Requiring the joined
  *  chain to REACH A CHAPTER NUMBER is what separates `"Genesis - Exodus 1:1"` (a real
  *  cross-book range whose first segment has no chapter) from a repeated noun.
  *
@@ -555,7 +566,7 @@ function hasChapterTail(text: string, end: number): boolean {
  *  at position 0 for joining back onto itself, `"1 John and 1 John"` fell through to the
  *  bare `JOHN` at index 2, whose join onto 1JN now looked like a different book, and
  *  answered JHN. That is the `"1st John"` mis-file family all over again: a CROSS-BOOK
- *  wrong facet, far worse than the prose it was meant to close.
+ *  wrong code, far worse than the prose it was meant to close.
  *
  *  Walked ITERATIVELY, and every index visited is memoized with the chain's verdict —
  *  reaching a chapter is a property of the whole suffix, so one walk settles every
@@ -668,10 +679,10 @@ function scanForBook(text: string): string | null {
  * Derive the USFM book code for a free-text scripture reference, or `null` if no book
  * can be recognized.
  *
- * Also the right way to normalize a client-supplied `book` filter value: it is
- * case-insensitive and accepts names as well as codes, so `deriveScriptureBook("gen")`
- * and `deriveScriptureBook("Genesis")` both yield `"GEN"` — unlike
- * {@link isScriptureBookCode}, which is a strict predicate over the canonical codes.
+ * Case-insensitive, and it accepts names as well as codes, so
+ * `deriveScriptureBook("gen")` and `deriveScriptureBook("Genesis")` both yield `"GEN"`
+ * — unlike {@link isScriptureBookCode}, a strict predicate over the codes this module
+ * recognizes.
  *
  * @example deriveScriptureBook("GENESIS 1:1–4")        // "GEN"
  * @example deriveScriptureBook("1 Corinthians 13")     // "1CO"
@@ -694,7 +705,8 @@ export function deriveScriptureBook(reference: string): string | null {
 }
 
 /**
- * Strict predicate: is this exactly one of the 66 canonical USFM codes? Case-sensitive
+ * Strict predicate: is this exactly one of the 66 USFM codes this module recognizes?
+ * Case-sensitive
  * by design — `"gen"` is false. Callers holding user input should normalize with
  * {@link deriveScriptureBook} first.
  */

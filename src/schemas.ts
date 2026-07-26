@@ -1469,7 +1469,8 @@ export type PublishGalleryItemRequest = z.infer<
  *
  *  `scriptureBook` is the derived USFM code (`deriveScriptureBook`); for a multi-book
  *  reference it is the FIRST recognized book, while `scriptureReference` still renders
- *  verbatim on the card — so only the filter is coarsened, never the display.
+ *  verbatim on the card — so only the derived code is coarsened, never the display.
+ *  Nothing queries on it: the listing offers sort + free-text `q` and no book filter.
  *
  *  `rank` is 1-based, CONTINUOUS ACROSS PAGES (page 2 of a 24-item page starts at 25),
  *  and non-null ONLY under `sort=popular`: rank is a property of the global popular
@@ -1528,14 +1529,21 @@ export const GalleryListResponseSchema = z.object({
 });
 export type GalleryListResponse = z.infer<typeof GalleryListResponseSchema>;
 
-/** `GET /v1/gallery` querystring.
+/** `GET /v1/gallery` querystring — `sort`, `q`, `cursor`, and nothing else.
  *
  *  There is NO client `limit`: the design names none, and an unbounded limit on a
  *  public, unauthenticated endpoint is a trivial DoS. Page size is a service constant.
  *
- *  `book` and `q` accept an empty/blank value (a UI that always appends the parameter
- *  must not get a 400); the service treats blank as ABSENT — a blank `q` must never
- *  become a `%%` match-everything predicate. `q` is escaped for `LIKE` server-side.
+ *  There is NO `book` filter either (dropped 2026-07-26). The gallery is sorted and
+ *  free-text searched, never filtered by book — and more fundamentally, WHICH BOOKS
+ *  EXIST IS A PROPERTY OF THE TRANSLATION, with the YouVersion API as the authority on
+ *  it, so a facet enumerated from a book list hardcoded in this repo was the wrong
+ *  design in the first place. `scriptureBook` stays an internal derived column (see
+ *  `scripture-book.ts`); it is not a query parameter.
+ *
+ *  `q` accepts an empty/blank value (a UI that always appends the parameter must not
+ *  get a 400); the service treats blank as ABSENT — a blank `q` must never become a
+ *  `%%` match-everything predicate. `q` is escaped for `LIKE` server-side.
  *
  *  `cursor` is validated by the service's cursor codec, not here: shape alone cannot
  *  tell a valid cursor from a forged one, so every cursor rejection shares ONE error
@@ -1544,7 +1552,6 @@ export type GalleryListResponse = z.infer<typeof GalleryListResponseSchema>;
  *  reset — honouring it would page a DIFFERENT ordering and skip or duplicate rows. */
 export const GalleryListQuerySchema = z.object({
   sort: GallerySortSchema.default("popular"),
-  book: z.string().optional(),
   q: z.string().optional(),
   cursor: z.string().optional(),
 });
