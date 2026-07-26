@@ -46,9 +46,11 @@
  *       `"PSALM 23 JOHN 3:16"` resolve. `"PS I love you"` does NOT: it normalizes to
  *       `"PS 1 LOVE YOU"`, so the chapter number is there but it runs straight into a
  *       WORD, and a word is not a terminator.
- *   (c) JOIN — a joiner (`-`, `;`, `,`, `…`, `&`, `/`, or the words `AND`/`TO`) onto
- *       ANOTHER REFERENCE SEGMENT: a book that carries its own chapter number, or a book
- *       joined onward to one. `"Genesis - Exodus 1:1"` is GEN; `"Amos and Andy"`,
+ *   (c) JOIN — a joiner onto ANOTHER REFERENCE SEGMENT: a book that carries its own chapter
+ *       number, or a book joined onward to one. A joiner is ANY run of characters carrying
+ *       no letter or digit — a space included — or one of the five words `AND`, `TO`,
+ *       `THROUGH`, `OR`, `VS`, in any combination. `"Genesis - Exodus 1:1"`,
+ *       `"Genesis: Exodus 1:1"` and `"Genesis Exodus 1:1"` are all GEN; `"Amos and Andy"`,
  *       `"Ho, hum"`, `"Ho, Ho, Ho"` and `"Romans…Ephesians"` are all null.
  *
  * WHY FORM (c) DEMANDS A CHAPTER FROM THE JOINED SEGMENT, and what that costs. Form (c)
@@ -113,6 +115,21 @@
  * UNRECOGNIZED / EMPTY DERIVES `null`, and the publish endpoint answers
  * **422 `scripture_book_underivable`**. An `UNKNOWN` sentinel would be junk in a public
  * facet and silently dropping the item from the filter is a worse lie.
+ *
+ * THE SEPARATOR NEVER DECIDES THE ANSWER (W6, closed 2026-07-26 — the last known mis-file
+ * class in this module). Form (c) used to enumerate its joiners, and a chapter-free first
+ * book followed by an UNLISTED separator failed the shape rule; the scan then walked past it
+ * and answered the SECOND book. `"Genesis: Exodus 1:1"` derived EXO, as did the `or`, `vs`,
+ * `(`, `|`, `+`, `!`, `?`, `", and"` and plain-SPACE spellings, and — through the possessive
+ * skip — even `"Genesis'Song of Solomon 1:1"`. So did the chapter-BEARING form:
+ * `"Psalm 23 | John 3:16"` derived JHN, where only the space spelling had been fixed. The
+ * fix widens the NOTION of a joiner instead of listing members (see {@link JOINER_RE}); the
+ * argument that makes it safe is positional — nothing standing between two BOOK PHRASES can
+ * be verse punctuation. Measured over 1,736,925 differential probes against the previous
+ * build: 638,959 answers moved to the FIRST book named, 0 moved to a later book, 0 became
+ * null, and 1,435 chapter-range spellings (`"Psalm 23 : 2"`) became non-null. The remaining
+ * residual is the WORD boundary, pinned as a decision in U-SB7g: an unlisted word does not
+ * join, which is exactly what keeps `"A song about Genesis 1:1"` answering GEN.
  *
  * TWO MIS-FILES FOUND BY THE REGRESSION SWEEP OF THIS PASS, not by the audit, both
  * pre-existing and both now fixed because each answered the WRONG BOOK — the one outcome
@@ -376,11 +393,41 @@ function isOrdinalTail(text: string, start: number, end: number): boolean {
   return PHRASE_SET.has(text.slice(start - 2, end));
 }
 
-/** A joiner between two reference segments, plus any space around it. Typographic
- *  dashes are already folded to ASCII `-` by {@link normalizeReference}; `…` is not
- *  folded, so it is listed here. `:` is deliberately NOT a joiner — it is verse
- *  punctuation INSIDE one reference. */
-const JOINER_RE = /^ *(?:[-;,…&/]|AND(?![A-Z0-9])|TO(?![A-Z0-9])) */;
+/** A joiner between two reference SEGMENTS: any run of characters carrying no letter or
+ *  digit, or one of five whole words, in any combination (`", and "` is one joiner).
+ *
+ *  THE NOTION IS GENERAL RATHER THAN A LIST OF MEMBERS, and that is the fix for W6 (found
+ *  2026-07-26 by a mutation audit, closed here). The old set was six characters plus
+ *  `AND`/`TO`, with `:` deliberately excluded as "verse punctuation INSIDE one reference".
+ *  The exclusion was wrong at THIS position, and the cost was a CROSS-BOOK MIS-FILE: a
+ *  chapter-free first book followed by an unlisted separator failed the shape rule, the scan
+ *  walked PAST it, and the SECOND book answered — `"Genesis: Exodus 1:1"` derived EXO, and so
+ *  did the `or`, `vs`, `(`, `|`, `+`, `!`, `?`, `", and"` and plain-SPACE spellings.
+ *  Measured over 1,093,592 two-book frames at 657234b: 642,339 answered a book that was not
+ *  the first one named.
+ *
+ *  WHY THE GENERAL RULE IS SOUND, in one sentence: verse punctuation lives between a NUMBER
+ *  and a NUMBER, so nothing standing between two BOOK PHRASES can be verse punctuation —
+ *  which is the only position this regex is ever asked about. Enumerating `:` instead (the
+ *  cheap fix) was measurably safe but closed one member and left the next unlisted separator
+ *  reopening the identical hole; a plain space is a member too, and it is the same adjacency
+ *  form (b) already accepts in `"Psalm 23 John 3:16"` -> PSA.
+ *
+ *  Two things this does NOT widen, both load-bearing:
+ *   - The chain must still REACH A CHAPTER NUMBER ({@link joinsAnotherReference}), which is
+ *     what keeps every W1 string (`"Ho, Ho, Ho"`, `"Ho: Ho"`, `"Song, Song"`) null.
+ *   - A WORD is a joiner only if it is one of these five. An unlisted word between two books
+ *     does NOT join them, so the left phrase stays prose and the scan walks on:
+ *     `"A song about Genesis 1:1"` is GEN. That boundary is deliberate and pinned (U-SB7g) —
+ *     `"Genesis then Exodus 1:1"` is EXO — because an English connector vocabulary is not
+ *     something this module owns, the same line it draws for chapter terminators. The WORD
+ *     set is therefore CLOSED by the same argument as the alias table: `AND`/`TO`/`THROUGH`
+ *     are range words, `OR`/`VS` are choice words, and `THRU` is deliberately out.
+ *
+ *  Typographic dashes are still folded to ASCII `-` by {@link normalizeReference}: they no
+ *  longer need to be for THIS regex, but `-` is also a {@link CHAPTER_TERMINATORS} member,
+ *  where the fold is what makes `"Psalm 23–KJV"` resolve. */
+const JOINER_RE = /^(?:[^A-Z0-9]|(?:AND|TO|OR|VS|THROUGH)(?![A-Z0-9]))+/;
 
 /** Reference punctuation that may sit between a book name and its chapter number. */
 const CHAPTER_RE = /^[ .:,;#]*(\d+)/;
@@ -415,19 +462,50 @@ function bookPhraseAt(
 
 /** A possessive belongs to the book phrase: `"Song of Solomon's 2:1"` is a reference to
  *  SNG. Matching the ASCII form only is what makes {@link normalizeReference}'s
- *  curly-apostrophe fold observable at all. */
+ *  curly-apostrophe fold observable at all.
+ *
+ *  The `'S` must END A TOKEN, exactly as {@link endsAtTokenBoundary} demands of a phrase: a
+ *  LETTER after it means that `S` opens the next word and there is no possessive here. This
+ *  is W6's last member and it is a CROSS-BOOK one: in `"Genesis'Song of Solomon 1:1"` the
+ *  unconditional skip ate the `'S` of `SONG`, so the form-(c) chain started mid-word at
+ *  `"ONG OF SOLOMON 1:1"`, GENESIS was rejected, and the scan answered SNG. A DIGIT after it
+ *  is still fine — a chapter number may sit tight against a phrase (`"Psalm's23"`) — which is
+ *  the same latitude the end-boundary guard gives. */
 function skipPossessive(text: string, index: number): number {
-  return text.startsWith("'S", index) ? index + 2 : index;
+  if (!text.startsWith("'S", index)) return index;
+  const after = index + 2;
+  return isUpperLetter((text[after] ?? "") as string) ? index : after;
 }
 
 /** Does a joiner at `index` introduce another book OR another number? Used only AFTER a
  *  chapter number has already proved reference shape, where `"Genesis 1 to 3"` and
  *  `"Genesis 1 and Exodus 2"` are both real references. A bare number is NOT enough in
- *  form (c) — `"Ho, 3 blind mice"` must stay null. */
+ *  form (c) — `"Ho, 3 blind mice"` must stay null.
+ *
+ *  THE ONE PLACE {@link JOINER_RE}'s general notion IS NARROWED, and the narrowing is
+ *  positional, like the notion itself: onto another BOOK anything separates (that segment
+ *  names a book, so it is a reference), but onto another NUMBER a run of plain SPACES does
+ *  NOT, because a chapter RANGE is always written with a real separator (`1-3`, `1 to 3`).
+ *  Without that line `"Job 30 000"` derives JOB and `"Psalm 23 2024"` derives PSA — two
+ *  numbers with nothing between them are prose, not a range. Measured: dropping it turns
+ *  1,148 of 4,592 `"<phrase> 23<tail>"` probes from null into a code, every one of them a
+ *  bare-space-then-number shape.
+ *
+ *  ITS PRICE, MEASURED AND ACCEPTED: `"Genesis 23 1 Exodus 3:16"` answers EXO — a chapter
+ *  number, a SECOND bare number, and only then another book, so the first book's tail is
+ *  unrecognizable and the scan walks on. 4,225 such frames remain, exactly as many as before
+ *  this pass (the narrowing takes nothing away that used to work). Dropping the narrowing
+ *  would close them, and that trade is refused deliberately: `"<book> <n> <n> <book> <ch>"`
+ *  is not a shape English or a reference produces, while `"<book> <n> <n>"` IS a prose shape,
+ *  and keeping prose out of a public facet is what this module is for. Two references written
+ *  with no separator at all still work, because the joiner-onto-a-BOOK branch above is not
+ *  narrowed: `"Psalm 23 1 John 3:16"` is PSA. */
 function joinsAnotherSegment(text: string, index: number): boolean {
   const after = joinerEndAt(text, index);
   if (after === null) return false;
-  return bookPhraseAt(text, after) !== null || isDigit((text[after] ?? "") as string);
+  if (bookPhraseAt(text, after) !== null) return true;
+  if (!/[^ ]/.test(text.slice(index, after))) return false;
+  return isDigit((text[after] ?? "") as string);
 }
 
 /** FORM (b) of the shape rule, in isolation: does a properly terminated chapter NUMBER
@@ -457,6 +535,11 @@ function hasChapterTail(text: string, end: number): boolean {
 
 /** FORM (c) of the shape rule: does a joiner at `index` introduce ANOTHER REFERENCE
  *  SEGMENT — a book carrying its own chapter number, or a book joined onward to one?
+ *
+ *  This is the rule W6's fix deliberately left ALONE. Widening which separators can join
+ *  (see {@link JOINER_RE}) is safe only because the chain still has to reach a chapter, and
+ *  every W1 string below is null for that reason and no other — measured over 660,387
+ *  chapter-free two- and three-link probes, the widening changed exactly 0 answers.
  *
  *  The original form (c) asked only "is another book named after this joiner", and that
  *  is the weakness a residual audit shot down: English repeats one word constantly, so
