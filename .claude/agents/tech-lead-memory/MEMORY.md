@@ -20,3 +20,4 @@ individual files, never here.
 - [Prisma schema part 2 conventions](prisma-schema-part-2-conventions.md) — task-5: shared JobStatus enum, all-Cascade FKs, workflow-id PK-no-default, no Composition/Scene, enum test seam
 - [Secret-crypto helpers](secret-crypto-helpers.md) — task-6: encryptSecret/decryptSecret contract, AES-256-GCM wire format (base64 of ver|iv|tag|ct), 64-hex key, SecretCryptoError codes
 - [Domain Zod schemas](domain-zod-schemas.md) — task-7: §2.11 schema contracts, KJV/BSB TranslationSchema, hand-written enum mirrors + drift test, zod@^4 runtime dep, JSON-column round-trip
+- [Schema comment edits + the migrate-diff proof](schema-comment-edits-and-migrate-diff-proof.md) — a `//` edit still churns the generated `inlineSchema`; prove "no migration" DB-free with Prisma 7.8's renamed `--from-schema`/`--to-schema` + `--exit-code`; why `@@index([scriptureBook])` is deliberately retained
