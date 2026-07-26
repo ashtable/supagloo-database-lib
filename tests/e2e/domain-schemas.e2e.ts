@@ -186,12 +186,33 @@ describe("e2e: domain Zod schemas round-trip through Postgres Json columns", () 
     if (parsed.success) expect(parsed.data).toEqual(musicSpec);
   });
 
-  it("acts as a real gate: a malformed persisted resultJson fails safeParse", async () => {
-    // Bypass the Zod gate to simulate corrupt/legacy data: a storyboard whose scene
-    // translation is "NIV" (outside KJV | BSB). This is the §8 line-875 scenario.
-    const malformed = {
+  it("accepts any non-empty translation, not just KJV | BSB", () => {
+    // Pins the §9-Q10 broadening (2026-07-18): generation sources ANY translation
+    // YouVersion licenses to the app for the user's chosen language, so
+    // TranslationSchema is `z.string().min(1)` (src/schemas.ts:98) and the LICENSED set
+    // is validated at runtime against the live collection call — never by this schema.
+    //
+    // Until 2026-07-26 the sibling test below asserted that "NIV" FAILS. That assertion
+    // had been stale since task 30 widened the schema out from under it, and it was the
+    // single red test in this suite. It is kept here inverted, as a POSITIVE assertion,
+    // so the broadening cannot be silently reverted.
+    const widened = {
       ...storyboard,
       scenes: [{ ...storyboard.scenes[0], translation: "NIV" }],
+    };
+    const parsed = GeneratedStoryboardSchema.safeParse(widened);
+    expect(parsed.success, JSON.stringify(parsed)).toBe(true);
+  });
+
+  it("acts as a real gate: a malformed persisted resultJson fails safeParse", async () => {
+    // Bypass the Zod gate to simulate corrupt/legacy data. The malformation has to be
+    // one the CURRENT schema actually rejects: an EMPTY translation, which fails
+    // TranslationSchema's `.min(1)`. Do NOT reach for a specific abbreviation here —
+    // every non-empty one is legitimately accepted (see the test above).
+    // This is the §8 line-875 scenario.
+    const malformed = {
+      ...storyboard,
+      scenes: [{ ...storyboard.scenes[0], translation: "" }],
     };
     const user = await makeUser("malformed");
 

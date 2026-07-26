@@ -591,8 +591,17 @@ export type GithubDisconnectResponse = z.infer<
 export const GithubRepoFilterSchema = z.enum(["empty", "all"]);
 export type GithubRepoFilter = z.infer<typeof GithubRepoFilterSchema>;
 
-/** One repo in the live listing (design-delta §8, wizards 12b/13a). `empty` is
- *  derived by the API from GitHub's `size === 0` (a repo with no commits). */
+/** One repo in the live listing (design-delta §8, wizards 12b/13a).
+ *
+ *  `empty` means "has no project in it yet, so it is safe to scaffold into", and
+ *  the API derives it in two stages (plan row 65). GitHub's `size` is KB-rounded
+ *  and computed asynchronously, so it lags UPWARD and never overstates: `size > 0`
+ *  therefore short-circuits to NOT empty with no further request. Only the
+ *  `size === 0` candidates are probed, with
+ *  `GET /repos/:owner/:repo/commits?per_page=2` — a `409 "Git Repository is empty"`
+ *  or a `200` with <= 1 commit means empty; >= 2 commits means not empty. The
+ *  <= 1 rule is deliberate: a repo created with `auto_init` holds exactly one
+ *  README commit and is still an empty project. */
 export const GithubRepoSchema = z.object({
   id: z.number(),
   name: z.string(),

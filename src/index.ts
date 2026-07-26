@@ -26,6 +26,21 @@ export type {
   InstallationToken,
 } from "./github";
 
+// Shared GitHub rate-limit retry/backoff (design-delta §11.7 "one implementation,
+// four consumers"; plan row 64). GitHub returns its SECONDARY (abuse) limit as
+// `403 + Retry-After` and its primary limit as `429`; the CLIENT honours the delay
+// in-process with a bounded, capped backoff (D64.1) while the DBOS step classifier
+// keeps 403 permanent, so the two retry layers never multiply. Ported from — never
+// imported from — the root e2e harness, which is test code.
+export {
+  isRetryableGithubStatus,
+  githubRetryDelayMs,
+  withGithubRetry,
+  formatGithubRateLimitHeaders,
+  DEFAULT_GITHUB_MAX_ATTEMPTS,
+} from "./github-retry";
+export type { GithubRetryOptions } from "./github-retry";
+
 // Shared S3 object-key layout helpers (design-delta §4/§8). One source of truth for
 // the key format, shared by the writers (DBOS render/git-ops workflows) and the
 // reader (the API's presigned-download route) so the format can never drift.
