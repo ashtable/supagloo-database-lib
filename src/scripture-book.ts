@@ -14,7 +14,8 @@
  *   - USFM    — `"GEN.1.1"`, `"1CO.13.4"` (the strict form the DBOS YouVersion client
  *               requires, `supagloo-nodejs-dbos/src/providers/youversion.ts`)
  *
- * Algorithm (plan D6, exactly):
+ * Algorithm (plan D6, with the two departures documented below — THE PRICE, on number-
+ * free ranges, and THE ARTICLE FORMS, on `THE `):
  *   1. Normalize — trim, collapse whitespace, uppercase, fold typographic dashes and
  *      apostrophes to ASCII, and fold numeric prefixes onto digits (`I`, `I.`, `FIRST`
  *      and `1ST` all become `1`; likewise for 2 and 3).
@@ -33,24 +34,71 @@
  * `"Mt Sinai"`. A phrase match is accepted only if, after optionally consuming a
  * possessive `'S` (`"Song of Solomon's 2:1"`), ONE of these holds:
  *
- *   (a) BARE — the phrase OPENS the string being scanned and nothing alphanumeric
- *       follows it. `"Genesis"` and `"Genesis."` resolve; `"Read Genesis"` and
- *       `"A New Song"` do not, and `"Ho Ho Ho"` cannot resolve on its trailing `HO`.
+ *   (a) BARE — the phrase OPENS THE STRING and nothing alphanumeric follows it.
+ *       `"Genesis"` and `"Genesis."` resolve; `"Read Genesis"` and `"A New Song"` do
+ *       not, and `"Ho Ho Ho"` cannot resolve on its trailing `HO`. This is the ONLY form
+ *       that accepts a reference with no chapter number at all, and it is why there is
+ *       exactly ONE scan of exactly ONE string (see THE ARTICLE FORMS below).
  *   (b) CHAPTER — optional reference punctuation, then a chapter NUMBER, and that
  *       number terminated by end-of-string, by reference punctuation (`:`, `.`, `,`,
- *       `;`, `-`), or by a joiner introducing another segment. `"PSALM 23"`,
- *       `"PSALM 23:2"`, `"GEN.1.1"`, `"Genesis 1 to 3"` resolve. `"PS I love you"` does
- *       NOT: it normalizes to `"PS 1 LOVE YOU"`, so the chapter number is there but it
- *       runs straight into a word.
- *   (c) JOIN — a joiner (`-`, `;`, `,`, `…`, `&`, `/`, or the words `AND`/`TO`)
- *       immediately followed by ANOTHER BOOK. `"Romans…Ephesians"` and
- *       `"Genesis - Exodus"` resolve; `"Amos and Andy"` and `"Ho, hum"` do not, because
- *       what follows the joiner is not a book.
+ *       `;`, `-`), by a joiner introducing another segment, or by ANOTHER BOOK.
+ *       `"PSALM 23"`, `"PSALM 23:2"`, `"GEN.1.1"`, `"Genesis 1 to 3"` and
+ *       `"PSALM 23 JOHN 3:16"` resolve. `"PS I love you"` does NOT: it normalizes to
+ *       `"PS 1 LOVE YOU"`, so the chapter number is there but it runs straight into a
+ *       WORD, and a word is not a terminator.
+ *   (c) JOIN — a joiner (`-`, `;`, `,`, `…`, `&`, `/`, or the words `AND`/`TO`) onto
+ *       ANOTHER REFERENCE SEGMENT: a book that carries its own chapter number, or a book
+ *       joined onward to one. `"Genesis - Exodus 1:1"` is GEN; `"Amos and Andy"`,
+ *       `"Ho, hum"`, `"Ho, Ho, Ho"` and `"Romans…Ephesians"` are all null.
  *
- * A consequence worth stating: a parenthetical translation after a chapter-only
- * reference (`"Psalm 23 (KJV)"`) is NOT reference-shaped and derives null. That is
- * deliberate — `translation` is its own request field and its own column, so the
- * parenthetical is redundant, and the 422 names the reference so the client can drop it.
+ * WHY FORM (c) DEMANDS A CHAPTER FROM THE JOINED SEGMENT, and what that costs. Form (c)
+ * exists to keep first-book-wins on a range whose FIRST segment has no chapter: without
+ * it `"Genesis - Exodus 1:1"` answers EXO — a wrong facet, strictly worse than a 422. But
+ * asking only "is another book named after this joiner" is a shape ordinary English hits
+ * constantly by repeating one word: `"Ho, Ho, Ho"`, `"Job, Job"`, `"Song, Song"` and
+ * `"PS, PS"` each named a book, a joiner and a book, and each derived a real code into a
+ * public facet. Demanding that the joined chain REACH a chapter number is what separates
+ * a real cross-book range from a repeated noun. Two cheaper rules were tried and
+ * rejected — see {@link joinsAnotherReference}, where both are recorded, including the
+ * one that re-opened the `"1st John"` CROSS-BOOK mis-file family.
+ *
+ * THE PRICE, stated plainly because it is a CONTRACT CHANGE from the first shipped
+ * version: a CHAPTER-FREE book range no longer resolves. `"Romans…Ephesians"` was ROM and
+ * `"Genesis - Exodus"` was GEN; both are now null -> 422. Such a range is an unusual way
+ * to fill `scriptureReference`, the 422 names the offending value, and the client can
+ * write `"Romans 1 - Ephesians 6"`. A silently mis-filed public gallery item is not
+ * recoverable at all. Plan D6 requires multi-book -> FIRST book — which still holds for
+ * every reference that reaches a chapter number, however long the chain
+ * (`"Genesis - Exodus - Leviticus 1:1"` is GEN) — not that a chapter-free range be
+ * accepted.
+ *
+ * THE ARTICLE FORMS are a CURATED ALIAS SET, not a `THE `-strip (DEVIATION from plan
+ * D6's step 1, which said to strip a leading `THE ` whenever the remainder still
+ * resolves). The strip re-scanned the article-less string, and that second scan has its
+ * own position 0 — so form (a) fired on it, handing EVERY one-word book and alias a free
+ * article-prefixed form: `"The Job"`, `"The Song"`, `"The Psalm"`, `"The Numbers"`,
+ * `"The Judges"` all derived codes, ordinary English every one. Instead, the five titles
+ * (across four books) whose conventional English form carries the definite article own it
+ * as an explicit alias — `THE ACTS`, `THE REVELATION`, `THE SONG OF SOLOMON`,
+ * `THE SONG OF SONGS`, `THE PSALMS`. The plan's two named cases (`"The Revelation"`
+ * resolves, `"Theodore"` does not) hold exactly as specified; the set is CLOSED and
+ * curated for the same reason
+ * the alias table omits `IS`/`AM`/`EX` (see MATCH PRECISION OVER RECALL below). One
+ * string, one scan, one position 0 — form (a)'s guarantee is now literally true.
+ *
+ * TWO FALSE-NEGATIVE CLASSES ARE DELIBERATE, and both are pinned in the tests so a
+ * reader can tell a decision from an oversight:
+ *   - A WORD never terminates a chapter number. `"Psalm 23 (KJV)"`, `"Psalm 23 KJV"`,
+ *     `"Genesis chapter 1"` and `"Book of Genesis"` all derive null. `translation` is
+ *     its own request field and its own column, so a translation suffix is redundant;
+ *     prose connectors (`chapter`, `book of`) are an open-ended vocabulary this module
+ *     does not own; and the rule that would admit them is the same rule that lets
+ *     `"PS I love you"` mis-file as PSA. Note the asymmetry — `"Psalm 119:105 ESV"` DOES
+ *     resolve, because the verse punctuation terminates the number before the trailing
+ *     word is examined. It only ever produces MORE nulls, never a wrong code.
+ *   - A separator-less chapter is ACCEPTED, and that is correct rather than tolerated:
+ *     `"GEN1:1"` and `"PSA23"` require it, and read the same way `"PS4"` IS Psalm 4 and
+ *     `"MT2"` IS Matthew 2. Nothing else is a plausible `scriptureReference`.
  *
  * MULTI-BOOK REFERENCES COLLAPSE TO THEIR FIRST BOOK. `"Genesis 1:1 – Exodus 2:2"`
  * derives `GEN`. The column is a single value driving a single-select facet and the
@@ -65,6 +113,19 @@
  * UNRECOGNIZED / EMPTY DERIVES `null`, and the publish endpoint answers
  * **422 `scripture_book_underivable`**. An `UNKNOWN` sentinel would be junk in a public
  * facet and silently dropping the item from the filter is a worse lie.
+ *
+ * TWO MIS-FILES FOUND BY THE REGRESSION SWEEP OF THIS PASS, not by the audit, both
+ * pre-existing and both now fixed because each answered the WRONG BOOK — the one outcome
+ * that cannot be recovered once a public gallery item is filed:
+ *   - `"PSALM 23 JOHN 3:16"` answered JHN. Two references written with no separator: the
+ *     first chapter number ran into a word, so PSALM was rejected and the scan walked on
+ *     to the SECOND book. A following BOOK now terminates a chapter number (form (b)), so
+ *     the FIRST book wins as D6 requires. Only a recognized book opens that door, never
+ *     any word, so `"PSALM 23 KJV"` is still null.
+ *   - `"X1 JOHN 1:1"` answered JHN. See {@link isOrdinalTail}: with the digit glued to a
+ *     letter the ordinal phrase `"1 JOHN"` cannot match at a token start, and the bare
+ *     `JOHN` behind it won. This is the `"1st John"` family reached from a third
+ *     direction, and it is now closed structurally rather than masked by match order.
  *
  * MATCH PRECISION OVER RECALL. A missing alias produces a loud, client-fixable 422; a
  * WRONG alias silently mis-files a public gallery item forever. So the alias table
@@ -91,6 +152,11 @@ export interface ScriptureBook {
  * and `FIRST`/`SECOND`/`THIRD` spellings are folded onto digits during normalization,
  * and the space-less/spaced variants (`"1CORINTHIANS"` / `"1 CO"`) are derived
  * mechanically, so neither needs an entry here.
+ *
+ * The five `THE …` aliases are the article-bearing conventional titles (see THE ARTICLE
+ * FORMS in the module header). They are aliases rather than a general `THE `-strip
+ * because the strip gave every one-word book a free article-prefixed prose form; this
+ * set is CLOSED, and each member is a whole conventional title, not `THE ` + any book.
  */
 export const SCRIPTURE_BOOKS: readonly ScriptureBook[] = [
   // --- Old Testament ---------------------------------------------------------
@@ -112,13 +178,22 @@ export const SCRIPTURE_BOOKS: readonly ScriptureBook[] = [
   { code: "NEH", name: "NEHEMIAH", aliases: ["NE"] },
   { code: "EST", name: "ESTHER", aliases: ["ESTH"] },
   { code: "JOB", name: "JOB", aliases: [] },
-  { code: "PSA", name: "PSALMS", aliases: ["PSALM", "PS", "PSS", "PSLM"] },
+  { code: "PSA", name: "PSALMS", aliases: ["PSALM", "PS", "PSS", "PSLM", "THE PSALMS"] },
   { code: "PRO", name: "PROVERBS", aliases: ["PROV", "PRV"] },
   { code: "ECC", name: "ECCLESIASTES", aliases: ["ECCL", "ECCLES", "QOHELETH"] },
   {
     code: "SNG",
     name: "SONG OF SOLOMON",
-    aliases: ["SONG OF SONGS", "CANTICLES", "CANT", "SONG", "SOS", "SS"],
+    aliases: [
+      "SONG OF SONGS",
+      "CANTICLES",
+      "CANT",
+      "SONG",
+      "SOS",
+      "SS",
+      "THE SONG OF SOLOMON",
+      "THE SONG OF SONGS",
+    ],
   },
   { code: "ISA", name: "ISAIAH", aliases: [] },
   { code: "JER", name: "JEREMIAH", aliases: ["JR"] },
@@ -142,7 +217,7 @@ export const SCRIPTURE_BOOKS: readonly ScriptureBook[] = [
   { code: "MRK", name: "MARK", aliases: ["MK"] },
   { code: "LUK", name: "LUKE", aliases: ["LK"] },
   { code: "JHN", name: "JOHN", aliases: ["JN"] },
-  { code: "ACT", name: "ACTS", aliases: ["AC"] },
+  { code: "ACT", name: "ACTS", aliases: ["AC", "THE ACTS"] },
   { code: "ROM", name: "ROMANS", aliases: ["RM"] },
   { code: "1CO", name: "1 CORINTHIANS", aliases: ["1 COR"] },
   { code: "2CO", name: "2 CORINTHIANS", aliases: ["2 COR"] },
@@ -166,7 +241,11 @@ export const SCRIPTURE_BOOKS: readonly ScriptureBook[] = [
   { code: "2JN", name: "2 JOHN", aliases: ["2 JN", "2 JHN"] },
   { code: "3JN", name: "3 JOHN", aliases: ["3 JN", "3 JHN"] },
   { code: "JUD", name: "JUDE", aliases: ["JD"] },
-  { code: "REV", name: "REVELATION", aliases: ["REVELATIONS", "RV", "APOCALYPSE"] },
+  {
+    code: "REV",
+    name: "REVELATION",
+    aliases: ["REVELATIONS", "RV", "APOCALYPSE", "THE REVELATION"],
+  },
 ];
 
 const BOOK_CODES: ReadonlySet<string> = new Set(SCRIPTURE_BOOKS.map((b) => b.code));
@@ -271,6 +350,32 @@ function endsAtTokenBoundary(text: string, end: number): boolean {
   return !isUpperLetter(text[end] as string);
 }
 
+/** Every match phrase as a set, for the ordinal-tail guard below. */
+const PHRASE_SET: ReadonlySet<string> = new Set(MATCH_PHRASES.map((p) => p.phrase));
+
+/** Is the phrase spanning `[start, end)` merely the BARE NAME inside an ordinal book
+ *  name whose digit sits at `start - 2`?
+ *
+ *  THE `1st John` MIS-FILE FAMILY, closed from its third direction. `"1 JOHN"` is a match
+ *  phrase, so `"1 John 4:8"` resolves to 1JN by longest-match — but only while the ordinal
+ *  phrase can match at all. In `"X1 JOHN 1:1"` the digit is glued to a letter, so the
+ *  start-boundary guard refuses `"1 JOHN"`, and the bare `JOHN` two characters later wins:
+ *  JHN, a CROSS-BOOK wrong facet in a non-null public facet. (The same family produced
+ *  `"1st John"` -> JHN before {@link NUMERIC_PREFIXES}, and `"1GEN 1:1"` -> GEN before the
+ *  digit half of {@link startsAtTokenBoundary}.)
+ *
+ *  Deliberately NARROW: it fires only when `<digit> <phrase>` is itself a real match
+ *  phrase, which today is only the John family (`JOHN`, `JN`, `JHN`). So a legitimate
+ *  series prefix keeps working — `"Day 5 Psalm 23"` is PSA and `"Week 3 Genesis 1:1"` is
+ *  GEN, because `"5 PSALM"` and `"3 GENESIS"` are not phrases — and `"Day 3 John 3:16"` is
+ *  3JN either way, because there the ordinal phrase DOES match at its own token start. */
+function isOrdinalTail(text: string, start: number, end: number): boolean {
+  if (start < 2) return false;
+  if (text[start - 1] !== " ") return false;
+  if (!isDigit(text[start - 2] as string)) return false;
+  return PHRASE_SET.has(text.slice(start - 2, end));
+}
+
 /** A joiner between two reference segments, plus any space around it. Typographic
  *  dashes are already folded to ASCII `-` by {@link normalizeReference}; `…` is not
  *  folded, so it is listed here. `:` is deliberately NOT a joiner — it is verse
@@ -289,72 +394,144 @@ function joinerEndAt(text: string, index: number): number | null {
   return m === null ? null : index + m[0].length;
 }
 
-/** Is there a book phrase at `index`? A deliberately WEAK, non-recursive probe: it asks
- *  only "is another book named here", which is all a joiner needs to prove it joins a
- *  second reference. Recursing into the full scan instead would make the cost of a
- *  hostile, separator-dense string super-linear for no extra precision. */
-function startsWithBookPhrase(text: string, index: number): boolean {
-  for (const { phrase } of MATCH_PHRASES) {
+/** The book phrase at `index` — which book, and where the phrase ends — or `null` if none
+ *  starts here.
+ *
+ *  MATCH_PHRASES is longest-first, so this reports the LONGEST book named here, which is
+ *  the one the scan itself would pick if it reached this position. */
+function bookPhraseAt(
+  text: string,
+  index: number,
+): { code: string; end: number } | null {
+  for (const { phrase, code } of MATCH_PHRASES) {
     const end = index + phrase.length;
     if (end > text.length) continue;
-    if (text.startsWith(phrase, index) && endsAtTokenBoundary(text, end)) return true;
+    if (text.startsWith(phrase, index) && endsAtTokenBoundary(text, end)) {
+      return { code, end };
+    }
   }
-  return false;
+  return null;
 }
 
-/** Does a joiner at `index` introduce another BOOK? Form (c) of the shape rule. */
-function joinsAnotherBook(text: string, index: number): boolean {
-  const after = joinerEndAt(text, index);
-  return after !== null && startsWithBookPhrase(text, after);
+/** A possessive belongs to the book phrase: `"Song of Solomon's 2:1"` is a reference to
+ *  SNG. Matching the ASCII form only is what makes {@link normalizeReference}'s
+ *  curly-apostrophe fold observable at all. */
+function skipPossessive(text: string, index: number): number {
+  return text.startsWith("'S", index) ? index + 2 : index;
 }
 
-/** Does a joiner at `index` introduce another book OR another number? Used only after a
- *  chapter number, where `"Genesis 1 to 3"` and `"Genesis 1 and Exodus 2"` are both
- *  real references. A bare number is NOT enough in form (c) — `"Ho, 3 blind mice"` must
- *  stay null. */
+/** Does a joiner at `index` introduce another book OR another number? Used only AFTER a
+ *  chapter number has already proved reference shape, where `"Genesis 1 to 3"` and
+ *  `"Genesis 1 and Exodus 2"` are both real references. A bare number is NOT enough in
+ *  form (c) — `"Ho, 3 blind mice"` must stay null. */
 function joinsAnotherSegment(text: string, index: number): boolean {
   const after = joinerEndAt(text, index);
   if (after === null) return false;
-  return (
-    startsWithBookPhrase(text, after) || isDigit((text[after] ?? "") as string)
-  );
+  return bookPhraseAt(text, after) !== null || isDigit((text[after] ?? "") as string);
+}
+
+/** FORM (b) of the shape rule, in isolation: does a properly terminated chapter NUMBER
+ *  follow the book phrase that ended at `end`?
+ *
+ *  Extracted so form (c) can reuse it on the segments it walks — "is this tail a
+ *  reference" and "is that a reference segment" are the same question, and asking it with
+ *  one function is what keeps the two forms from drifting apart. */
+function hasChapterTail(text: string, end: number): boolean {
+  const i = skipPossessive(text, end);
+  const chapter = CHAPTER_RE.exec(text.slice(i));
+  if (chapter === null) return false;
+  const after = i + (chapter[0] as string).length;
+  if (after === text.length) return true;
+  if (CHAPTER_TERMINATORS.includes(text[after] as string)) return true;
+  if (joinsAnotherSegment(text, after)) return true;
+  // A following BOOK terminates the number too. `"PSALM 23 JOHN 3:16"` is two references
+  // written with no separator between them; before this, PSALM was REJECTED here and the
+  // scan walked on to answer JHN — the SECOND book, i.e. a wrong facet, which is the one
+  // outcome this module must never produce (D6: multi-book -> FIRST book). A following
+  // WORD still does not terminate a number, so `"PSALM 23 KJV"` stays null and
+  // `"PS I love you"` (normalized `"PS 1 LOVE YOU"`) cannot use this door: only a
+  // recognized BOOK opens it.
+  const spaces = /^ +/.exec(text.slice(after));
+  return spaces !== null && bookPhraseAt(text, after + spaces[0].length) !== null;
+}
+
+/** FORM (c) of the shape rule: does a joiner at `index` introduce ANOTHER REFERENCE
+ *  SEGMENT — a book carrying its own chapter number, or a book joined onward to one?
+ *
+ *  The original form (c) asked only "is another book named after this joiner", and that
+ *  is the weakness a residual audit shot down: English repeats one word constantly, so
+ *  `"Ho, Ho, Ho"`, `"Job, Job"`, `"Song, Song"` and `"PS, PS"` all read as
+ *  book-joiner-book and all derived a real code into a public facet. Requiring the joined
+ *  chain to REACH A CHAPTER NUMBER is what separates `"Genesis - Exodus 1:1"` (a real
+ *  cross-book range whose first segment has no chapter) from a repeated noun.
+ *
+ *  Two cheaper rules were tried first and REJECTED, both recorded here so they are not
+ *  re-invented: "the string must contain a digit somewhere" still accepted
+ *  `"Song and song, take 2"`, where the digit belongs to neither book; and "the joined
+ *  book must be a DIFFERENT book" opened a strictly WORSE hole — with `"1 JOHN"` rejected
+ *  at position 0 for joining back onto itself, `"1 John and 1 John"` fell through to the
+ *  bare `JOHN` at index 2, whose join onto 1JN now looked like a different book, and
+ *  answered JHN. That is the `"1st John"` mis-file family all over again: a CROSS-BOOK
+ *  wrong facet, far worse than the prose it was meant to close.
+ *
+ *  Walked ITERATIVELY, and every index visited is memoized with the chain's verdict —
+ *  reaching a chapter is a property of the whole suffix, so one walk settles every
+ *  position on it. That keeps a hostile, separator-dense string linear, which is the cost
+ *  worry that made the original probe deliberately shallow. */
+function joinsAnotherReference(
+  text: string,
+  index: number,
+  memo: Map<number, boolean>,
+): boolean {
+  const visited: number[] = [];
+  let cursor = joinerEndAt(text, index);
+  let result = false;
+  while (cursor !== null) {
+    const cached = memo.get(cursor);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    visited.push(cursor);
+    const book = bookPhraseAt(text, cursor);
+    if (book === null) break;
+    if (hasChapterTail(text, book.end)) {
+      result = true;
+      break;
+    }
+    cursor = joinerEndAt(text, skipPossessive(text, book.end));
+  }
+  for (const visit of visited) memo.set(visit, result);
+  return result;
 }
 
 /**
  * THE REFERENCE-SHAPE RULE (see the module header). Is what follows a matched book
  * phrase shaped like the rest of a scripture reference? This is the guard that keeps
  * ordinary English prose — `"a psalm of thanksgiving"`, `"Mt Sinai"`,
- * `"Job interview at 9"` — from silently mis-filing a public gallery item.
+ * `"Job interview at 9"`, `"Ho, Ho, Ho"` — from silently mis-filing a public gallery
+ * item.
  *
  * @param start where the phrase began, needed because the BARE form is only legal when
- *              the book name opens the string being scanned.
+ *              the book name opens the string.
+ * @param memo shared with the rest of the scan; see {@link joinsAnotherReference}.
  */
 function hasReferenceShapedTail(
   text: string,
   start: number,
   end: number,
+  memo: Map<number, boolean>,
 ): boolean {
-  let i = end;
-  // A possessive is still a reference to that book: "Song of Solomon's 2:1". Matching
-  // the ASCII form only is what makes normalizeReference's curly-apostrophe fold
-  // observable at all.
-  if (text.startsWith("'S", i)) i += 2;
-  const rest = text.slice(i);
+  const i = skipPossessive(text, end);
 
-  // (a) BARE — the whole (scanned) string is the book name, modulo trailing punctuation.
-  if (start === 0 && !/[A-Z0-9]/.test(rest)) return true;
+  // (a) BARE — the whole string is the book name, modulo trailing punctuation.
+  if (start === 0 && !/[A-Z0-9]/.test(text.slice(i))) return true;
 
   // (b) CHAPTER — a chapter number, properly terminated.
-  const chapter = CHAPTER_RE.exec(rest);
-  if (chapter !== null) {
-    const after = i + (chapter[0] as string).length;
-    if (after === text.length) return true;
-    if (CHAPTER_TERMINATORS.includes(text[after] as string)) return true;
-    if (joinsAnotherSegment(text, after)) return true;
-  }
+  if (hasChapterTail(text, end)) return true;
 
-  // (c) JOIN — a joiner straight onto another book: "Romans…Ephesians".
-  return joinsAnotherBook(text, i);
+  // (c) JOIN — a joiner onto another reference SEGMENT: "Genesis - Exodus 1:1" is GEN.
+  return joinsAnotherReference(text, i, memo);
 }
 
 /**
@@ -386,6 +563,9 @@ function normalizeReference(reference: string): string {
  * committing matcher would answer null.
  */
 function scanForBook(text: string): string | null {
+  // One memo for the whole scan: every form-(c) chain walk records the suffixes it
+  // visited, so a separator-dense string is walked once rather than once per position.
+  const joinMemo = new Map<number, boolean>();
   for (let i = 0; i < text.length; i += 1) {
     if (!startsAtTokenBoundary(text, i)) continue;
     for (const { phrase, code } of MATCH_PHRASES) {
@@ -393,7 +573,8 @@ function scanForBook(text: string): string | null {
       if (end > text.length) continue;
       if (!text.startsWith(phrase, i)) continue;
       if (!endsAtTokenBoundary(text, end)) continue;
-      if (!hasReferenceShapedTail(text, i, end)) continue;
+      if (isOrdinalTail(text, i, end)) continue;
+      if (!hasReferenceShapedTail(text, i, end, joinMemo)) continue;
       return code;
     }
   }
@@ -420,21 +601,13 @@ export function deriveScriptureBook(reference: string): string | null {
   const normalized = normalizeReference(reference);
   if (normalized.length === 0) return null;
 
-  const direct = scanForBook(normalized);
-  if (direct !== null) return direct;
-
-  // Strip a leading `THE ` ONLY as a fallback — i.e. only when what follows still
-  // resolves. `"Theodore"` has no trailing space after `THE`, and even if it did the
-  // remainder would not resolve, so the strip can never turn a non-book into a book.
-  //
-  // LOAD-BEARING for exactly one shape: a BARE article-prefixed book, `"The
-  // Revelation"`. The bare form of the shape rule only fires when the book name opens
-  // the string being scanned (that is what keeps `"Ho Ho Ho"` from resolving on its
-  // trailing `HO`), so the in-string match at index 4 is rejected and the article has to
-  // come off for `"REVELATION"` to become the whole reference.
-  if (normalized.startsWith("THE ")) return scanForBook(normalized.slice(4));
-
-  return null;
+  // ONE string, ONE scan. There used to be a second scan of the string with a leading
+  // `THE ` removed, which is what made `"The Revelation"` work — and, because that
+  // second scan brought its own position 0, what also made `"The Job"`, `"The Song"`,
+  // `"The Psalm"`, `"The Numbers"` and `"The Judges"` derive book codes out of ordinary
+  // English. The article-bearing titles are curated aliases now (see the module header),
+  // so form (a)'s "opens the string" is a single, literal condition again.
+  return scanForBook(normalized);
 }
 
 /**

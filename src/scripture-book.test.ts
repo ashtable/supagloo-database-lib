@@ -407,7 +407,11 @@ describe("Task #39 scripture-book — case + whitespace (U-SB6)", () => {
     expect(deriveScriptureBook("song of songs 1:1")).toBe("SNG");
   });
 
-  it("strips a leading THE only when what follows still resolves", () => {
+  // An article-prefixed reference WITH a chapter never needed the article handled at
+  // all — the book still opens a chapter-shaped tail at index 4. These two are here
+  // because D6 names them, and because "Theodore"/"Theology 101" must never be mistaken
+  // for an article plus a book.
+  it("resolves an article-prefixed reference and never mistakes THE inside a word", () => {
     expect(deriveScriptureBook("The Revelation 21:4")).toBe("REV");
     expect(deriveScriptureBook("The Acts 2:1")).toBe("ACT");
     // "Theodore" must NOT become "odore" — and must not resolve at all.
@@ -415,18 +419,46 @@ describe("Task #39 scripture-book — case + whitespace (U-SB6)", () => {
     expect(deriveScriptureBook("Theology 101")).toBeNull();
   });
 
-  // The `THE `-strip is LOAD-BEARING for exactly this shape. A bare book name is only
-  // accepted when it OPENS the string being scanned (that rule is what keeps "Ho Ho Ho"
-  // from resolving on its trailing HO), so "THE REVELATION" cannot resolve on the
-  // in-string match at index 4 — it resolves only after the article is stripped and
-  // "REVELATION" becomes the whole reference.
-  it("resolves a BARE article-prefixed book only because of the THE strip", () => {
+  // The article forms are a CURATED ALIAS SET ("THE ACTS", "THE REVELATION", "THE SONG
+  // OF SOLOMON", "THE SONG OF SONGS", "THE PSALMS"), not a general `THE `-strip: five
+  // titles across four books, the only ones whose conventional English form carries the
+  // definite article. The set is closed — see the W2 block below for what it excludes.
+  it("resolves the CURATED article-prefixed titles", () => {
     expect(deriveScriptureBook("The Revelation")).toBe("REV");
     expect(deriveScriptureBook("the acts")).toBe("ACT");
     expect(deriveScriptureBook("The Song of Solomon")).toBe("SNG");
+    expect(deriveScriptureBook("The Song of Songs")).toBe("SNG");
+    expect(deriveScriptureBook("The Psalms")).toBe("PSA");
+    expect(deriveScriptureBook("The Psalms 23")).toBe("PSA");
+    expect(deriveScriptureBook("The Song of Solomon's 2:1")).toBe("SNG");
     // and it still cannot invent a book out of prose that merely starts with "THE ".
     expect(deriveScriptureBook("The quick brown fox")).toBeNull();
   });
+
+  // W2 (residual audit of 419bba5). The old general `THE `-strip re-scanned the string
+  // with the article removed, which created a SECOND position 0 — and the BARE form of
+  // the shape rule only needs position 0. So every one-word book and alias got a free
+  // article-prefixed prose form alongside the intended titles. Each of these strings is
+  // ordinary English, and each derived a real book code before the strip was replaced by
+  // the curated alias set above.
+  it.each([
+    ["The Job", "JOB"],
+    ["The Song", "SNG"],
+    ["The Psalm", "PSA"],
+    ["The Numbers", "NUM"],
+    ["The Judges", "JDG"],
+    ["The Genesis", "GEN"],
+    ["The John", "JHN"],
+    // Not a strip case — this one guards the NEW mechanism. "THE ACTS" is now a match
+    // phrase, so it matches at position 0 here; the shape rule must still reject it
+    // because the string continues into prose.
+    ["The Acts of the Apostles were many", "null (guards the alias, not the strip)"],
+  ])(
+    "returns null for %s, which the THE-strip used to derive as %s (W2)",
+    (reference: string) => {
+      expect(deriveScriptureBook(reference)).toBeNull();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -446,12 +478,37 @@ describe("Task #39 scripture-book — multi-book -> first book (U-SB7)", () => {
     expect(deriveScriptureBook("Job 1:21, Philippians 4:13")).toBe("JOB");
   });
 
-  // A joiner (a separator character, or the words AND/TO) is itself a valid
-  // continuation of a reference — but ONLY when a second book actually follows it.
-  // That second condition is what keeps "Amos and Andy" from deriving AMO.
-  it("accepts a chapter-less join, and a join with no second book resolves nothing", () => {
-    expect(deriveScriptureBook("Romans…Ephesians")).toBe("ROM");
-    expect(deriveScriptureBook("Genesis - Exodus")).toBe("GEN");
+  // A joiner (a separator character, or the words AND/TO) continues a reference only when
+  // it leads to ANOTHER REFERENCE SEGMENT: a book that carries its own chapter number, or
+  // a book joined onward to one. "A second book is named" is not enough (that is what
+  // keeps "Amos and Andy" from deriving AMO, and what the W1 block in U-SB7b is about).
+  //
+  // *** DELIBERATE CONTRACT CHANGE (final pre-release pass) ***
+  // A CHAPTER-FREE book range used to resolve to its first book: "Romans…Ephesians" was
+  // ROM and "Genesis - Exodus" was GEN. Both are now null -> a loud 422. That is the
+  // price of closing W1: the same form (c) that accepted them also accepted every
+  // "<book><joiner><book>" string ("Ho, Ho, Ho" -> HOS), which is a SILENT, permanent
+  // mis-file of a public facet. A chapter-free book range is an unusual way to fill
+  // `scriptureReference`, the 422 names the reference, and the client can write
+  // "Romans 1 - Ephesians 6"; a wrong facet cannot be recovered at all. D6 requires
+  // multi-book -> FIRST book, which still holds for every reference that reaches a
+  // chapter number.
+  it("rejects a join that never reaches a chapter, and a join with no second book", () => {
+    expect(deriveScriptureBook("Romans…Ephesians")).toBeNull();
+    expect(deriveScriptureBook("Genesis - Exodus")).toBeNull();
+    // The same shape as prose rather than as a range, and the module cannot tell them
+    // apart: two given names, or two gospels. Both now cost a 422 instead of a guess.
+    expect(deriveScriptureBook("Mark and John")).toBeNull();
+    expect(deriveScriptureBook("Luke and John")).toBeNull();
+    // ...while form (c) itself stays alive and load-bearing: once the chain reaches a
+    // chapter, a chapter-less FIRST segment still wins. Deleting form (c) instead of
+    // tightening it would answer EXO / LEV here — a wrong facet, strictly worse than the
+    // 422 above. The third case is why the chain is WALKED rather than probed one step:
+    // a one-step rule answers EXO for it.
+    expect(deriveScriptureBook("Genesis - Exodus 1:1")).toBe("GEN");
+    expect(deriveScriptureBook("Romans…Ephesians 2:8")).toBe("ROM");
+    expect(deriveScriptureBook("Genesis - Exodus - Leviticus 1:1")).toBe("GEN");
+    expect(deriveScriptureBook("Genesis, Exodus, Leviticus 1:1")).toBe("GEN");
     expect(deriveScriptureBook("Genesis 1 and Exodus 2")).toBe("GEN");
     // After a chapter number a joiner may also introduce another NUMBER, because
     // "Genesis 1 to 3" is a real chapter range.
@@ -462,6 +519,24 @@ describe("Task #39 scripture-book — multi-book -> first book (U-SB7)", () => {
     // ...but a bare NUMBER is not enough to make a joiner a reference join, or every
     // "<alias>, <number>" fragment of prose would resolve.
     expect(deriveScriptureBook("Ho, 3 blind mice")).toBeNull();
+  });
+
+  // *** FIXED IN THIS PASS, found by the regression sweep rather than by the audit ***
+  // Two references written with NO separator between them. The chapter number of the
+  // first was not "properly terminated" (a space then a word), so the first book was
+  // REJECTED and the scan walked on to answer the SECOND book — a silent wrong facet, and
+  // a direct violation of D6's multi-book -> FIRST book. A following BOOK now terminates a
+  // chapter number, so the first book wins. The fix is deliberately narrow: only a
+  // recognized BOOK opens this door, never any word, which is what keeps the W4 pins
+  // ("Psalm 23 KJV") and "PS I love you" null.
+  it("takes the FIRST book when two references are written with no separator", () => {
+    expect(deriveScriptureBook("Psalm 23 John 3:16")).toBe("PSA"); // was JHN
+    expect(deriveScriptureBook("Genesis 1 Exodus 2")).toBe("GEN"); // was EXO
+    expect(deriveScriptureBook("Mark 10 Luke 18:16")).toBe("MRK");
+    // The guards that must survive the widening: a WORD is still not a terminator.
+    expect(deriveScriptureBook("Psalm 23 KJV")).toBeNull();
+    expect(deriveScriptureBook("PS I love you")).toBeNull();
+    expect(deriveScriptureBook("Job interview at 9")).toBeNull();
   });
 
   it("a leading non-book word does not hand the reference to a LATER book", () => {
@@ -507,6 +582,72 @@ describe("Task #39 scripture-book — prose is not a reference (U-SB7b)", () => 
     }
   });
 
+  // W1 (residual audit of 419bba5). "Ho Ho Ho" (spaces) was pinned above, but the
+  // COMMA-spelled Santa laugh — the more natural spelling — still derived HOS, because
+  // form (c) of the shape rule only asked "is another book named after this joiner", and
+  // a REPEATED one-word alias answers yes. Every string here is prose that derived a
+  // real book code on the built module before this pass; each is a permanent mis-file of
+  // a public gallery facet, so each gets its own assertion. What closes all ten is that
+  // a joiner must now reach a CHAPTER NUMBER, and none of these has one anywhere.
+  it.each([
+    ["Ho, Ho, Ho", "HOS"],
+    ["Ho, ho, ho!", "HOS"],
+    ["Ho-Ho", "HOS"],
+    ["Ho & Ho", "HOS"],
+    ["Ho/Ho", "HOS"],
+    ["Ho and Ho", "HOS"],
+    ["Song, Song", "SNG"],
+    ["song and song", "SNG"],
+    ["Job, Job", "JOB"],
+    ["PS, PS", "PSA"],
+  ])("returns null for %s, which used to derive %s (W1)", (reference: string) => {
+    expect(deriveScriptureBook(reference)).toBeNull();
+  });
+
+  // The same class WITH a number in the string. These are why the rule is "the joined
+  // chain reaches a chapter" and not the cheaper "the string contains a digit somewhere":
+  // the digit here belongs to neither book, so a digit-anywhere gate lets all three
+  // through.
+  it("returns null for a repeated-book join even when the string carries a number (W1)", () => {
+    for (const ref of [
+      "Song and song, take 2",
+      "Ho, ho 3 times",
+      "Job, job for 2 years",
+    ]) {
+      expect(deriveScriptureBook(ref), JSON.stringify(ref)).toBeNull();
+    }
+  });
+
+  // The OTHER rule that was tried and rejected — "the joined book must be a DIFFERENT
+  // book" — is pinned here by its victim. With "1 JOHN" refused at position 0 for joining
+  // back onto itself, the scan fell through to the bare JOHN at index 2, whose join onto
+  // 1JN then looked like a different book, and answered JHN: a CROSS-BOOK wrong facet,
+  // the "1st John" mis-file family reopened. Under the shipped rule the chain never
+  // reaches a chapter, so nothing resolves and nothing mis-files.
+  it("never lets an ordinal book fall through to its bare name (the 1 John trap)", () => {
+    // The invariant, stated first because it is the whole point: NOTHING in this family
+    // may answer JHN. Whether a given spelling resolves to the ordinal book or to null is
+    // secondary; answering the wrong BOOK is the unrecoverable outcome.
+    for (const ref of [
+      "1 John and 1 John",
+      "1 John, 1 John",
+      "2 John and 2 John",
+      "3 John and 3 John",
+      "1 Jn and 1 Jn",
+    ]) {
+      expect(deriveScriptureBook(ref), JSON.stringify(ref)).not.toBe("JHN");
+    }
+    // The exact values, so a future change to either rule is visible rather than silent.
+    expect(deriveScriptureBook("1 John and 1 John")).toBeNull();
+    expect(deriveScriptureBook("2 John and 2 John")).toBeNull();
+    // The COMMA spelling resolves — and resolves to the ORDINAL book. "1 JOHN, 1" reads
+    // as chapter 1 of 1 John followed by another book, which is form (b), not form (c).
+    expect(deriveScriptureBook("1 John, 1 John")).toBe("1JN");
+    // ...and with a real chapter anywhere in the chain, the ordinal book wins outright.
+    expect(deriveScriptureBook("1 John 4:8 and 1 John 5:1")).toBe("1JN");
+    expect(deriveScriptureBook("1 John and 1 John 5")).toBe("1JN");
+  });
+
   it("a bare book name resolves ONLY when it is the whole reference", () => {
     expect(deriveScriptureBook("Genesis")).toBe("GEN");
     expect(deriveScriptureBook("Genesis.")).toBe("GEN"); // trailing punctuation is fine
@@ -544,6 +685,26 @@ describe("Task #39 scripture-book — token-boundary guards (U-SB7c)", () => {
     expect(deriveScriptureBook("23PSA 1:1")).toBeNull();
   });
 
+  // *** FIXED IN THIS PASS, found by the regression sweep rather than by the audit ***
+  // The `1st John` mis-file family, third direction. "1 JOHN" is a match phrase, so the
+  // ordinal normally wins by longest-match — but when the digit is glued to a letter the
+  // start guard refuses "1 JOHN", and the bare JOHN two characters on used to win: JHN, a
+  // cross-book wrong facet. A bare name may no longer start immediately after "<digit> "
+  // when "<digit> <name>" is itself a phrase.
+  it("a bare book name never wins as the TAIL of an unreachable ordinal name", () => {
+    expect(deriveScriptureBook("x1 john 1:1")).toBeNull(); // was JHN
+    expect(deriveScriptureBook("23 John 1:1")).toBeNull(); // was JHN
+    // Narrow by design. A series prefix must still resolve, because "5 PSALM" and
+    // "3 GENESIS" are not phrases — only the John family is a suffix of an ordinal name.
+    expect(deriveScriptureBook("Day 5 Psalm 23")).toBe("PSA");
+    expect(deriveScriptureBook("Week 3 Genesis 1:1")).toBe("GEN");
+    // ...and where the ordinal phrase CAN match at its own token start, nothing changes.
+    expect(deriveScriptureBook("Day 3 John 3:16")).toBe("3JN");
+    expect(deriveScriptureBook("See 1 John 4:8")).toBe("1JN");
+    expect(deriveScriptureBook("#1 John 4:8")).toBe("1JN");
+    expect(deriveScriptureBook("23. John 1:1")).toBe("JHN"); // a numbered list item
+  });
+
   // The END guard. The first three are also rejected by the shape rule (a letter can
   // never open a valid tail), so they document the rule rather than isolate the guard;
   // the last one isolates it, because AND is a joiner and shape alone would accept
@@ -558,6 +719,47 @@ describe("Task #39 scripture-book — token-boundary guards (U-SB7c)", () => {
   it("still matches a phrase that ends immediately before a DIGIT (the USFM shape)", () => {
     expect(deriveScriptureBook("GEN1:1")).toBe("GEN");
     expect(deriveScriptureBook("PSA23")).toBe("PSA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U-SB7d — the residual-audit decisions, pinned either way
+// ---------------------------------------------------------------------------
+
+// A reader must be able to tell a DECISION from an OVERSIGHT. These two blocks pin
+// behaviour that a residual audit of 419bba5 flagged as undocumented and unpinned. Both
+// are deliberately left AS THEY ARE; the one-line reason is on each block.
+describe("Task #39 scripture-book — pinned residual decisions (U-SB7d)", () => {
+  // W3 — ACCEPTED AS CORRECT. A separator-less chapter is required by the USFM/tight
+  // spellings that must work ("GEN1:1", "PSA23"), and read tightly these strings ARE
+  // references: "PS4" is Psalm 4, "MT2" is Matthew 2. Nothing else is a plausible
+  // `scriptureReference`, so there is no mis-file to close here.
+  it("pins the tight alias+digit form: `PS4` IS Psalm 4", () => {
+    expect(deriveScriptureBook("PS4")).toBe("PSA");
+    expect(deriveScriptureBook("PS5")).toBe("PSA");
+    expect(deriveScriptureBook("MT2")).toBe("MAT");
+    expect(deriveScriptureBook("HO2")).toBe("HOS");
+    expect(deriveScriptureBook("JOB1")).toBe("JOB");
+  });
+
+  // W4 — ACCEPTED AS NULL (a loud 422, never a mis-file). A chapter number must be
+  // terminated by end-of-string or reference punctuation, and NOT by a word: the rule
+  // that would let "PSALM 23 KJV" through is the same rule that lets "PS I love you"
+  // (normalized "PS 1 LOVE YOU") mis-file as PSA. `translation` is its own request field
+  // and its own column, so the suffix is redundant, and prose connectors ("chapter",
+  // "book of") are an open-ended vocabulary this module deliberately does not own.
+  it("pins the trailing-word false negatives: a WORD never terminates a chapter", () => {
+    expect(deriveScriptureBook("Psalm 23 KJV")).toBeNull();
+    expect(deriveScriptureBook("Psalm 23 NIV")).toBeNull();
+    expect(deriveScriptureBook("Genesis chapter 1")).toBeNull();
+    expect(deriveScriptureBook("Book of Genesis")).toBeNull();
+    expect(deriveScriptureBook("The Book of Genesis")).toBeNull();
+    // The ASYMMETRY, pinned so it reads as understood rather than accidental: verse
+    // punctuation terminates the number BEFORE the trailing word is ever examined, so
+    // the same suffix is harmless here. The asymmetry only ever produces MORE nulls —
+    // it can never produce a wrong code — which is why it is tolerable.
+    expect(deriveScriptureBook("Psalm 119:105 ESV")).toBe("PSA");
+    expect(deriveScriptureBook("Psalm 23:1 KJV")).toBe("PSA");
   });
 });
 
