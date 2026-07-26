@@ -739,6 +739,21 @@ describe("Tasks #39/#40 schemas — PublishGalleryItemRequestSchema (U-GS2)", ()
     expect(S.PublishGalleryItemRequestSchema.safeParse(noRef).success).toBe(false);
   });
 
+  it("bounds title AND scriptureReference at exactly 120 characters (both boundaries)", () => {
+    // The upper bound matters on scriptureReference specifically: it is rendered
+    // VERBATIM on a public card and it is the string echoed back in the 422 message, so
+    // an unbounded value is both a layout break and an error-message payload. Asserted
+    // at 120/121 rather than "some long string", so widening the cap fails here.
+    const ok = (patch: Record<string, unknown>) =>
+      S.PublishGalleryItemRequestSchema.safeParse({ ...minimal, ...patch }).success;
+    expect(ok({ scriptureReference: "G".repeat(120) })).toBe(true);
+    expect(ok({ scriptureReference: "G".repeat(121) })).toBe(false);
+    expect(ok({ title: "T".repeat(120) })).toBe(true);
+    expect(ok({ title: "T".repeat(121) })).toBe(false);
+    expect(ok({ description: "D".repeat(1000) })).toBe(true);
+    expect(ok({ description: "D".repeat(1001) })).toBe(false);
+  });
+
   it("rejects an empty translation (delegates to TranslationSchema) and an over-long description", () => {
     expect(
       S.PublishGalleryItemRequestSchema.safeParse({ ...minimal, translation: "" })
@@ -817,6 +832,41 @@ describe("Tasks #39/#40 schemas — GalleryItemDtoSchema (U-GS4)", () => {
     expect(bad({ upvoteCount: "7" })).toBe(false);
     expect(bad({ viewerHasUpvoted: "false" })).toBe(false);
   });
+
+  // REQUIRED-NESS, key by key. The failure this guards is concrete and cheap to ship: a
+  // handler whose Prisma `select` forgets `scriptureBook` or `publishedAt` returns an
+  // object MISSING that key, and if the field were `.optional()` the DTO would accept it
+  // and the card would render `undefined`. Only `rank` and `thumbnailUrl` are nullable,
+  // and both are nullable-NOT-optional, so the handler is still forced to decide (a null
+  // rank means "not the popular sort"; a null thumbnailUrl means "could not be signed").
+  // A fully-populated positive fixture cannot catch a loosened field, and neither can
+  // tests/typecheck/schemas.type-assert.ts, which builds exactly such a literal.
+  it("requires EVERY key — omitting any one fails (a partial Prisma select must not parse)", () => {
+    const keys = Object.keys(validGalleryItemDto);
+    expect(keys, "the fixture must cover the whole DTO").toHaveLength(16);
+    for (const key of keys) {
+      const partial: Record<string, unknown> = { ...validGalleryItemDto };
+      delete partial[key];
+      expect(
+        S.GalleryItemDtoSchema.safeParse(partial).success,
+        `omitting ${key} must fail — has it become .optional()/.nullish()?`,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps `translation` on the shared TranslationSchema, not a free string", () => {
+    // TranslationSchema is `z.string().min(1)`. A plain `z.string()` here would accept an
+    // empty translation and put a blank `· ` on a public card; this is the assertion that
+    // fails if the field is ever downgraded.
+    expect(
+      S.GalleryItemDtoSchema.safeParse({ ...validGalleryItemDto, translation: "" })
+        .success,
+    ).toBe(false);
+    expect(
+      S.GalleryItemDtoSchema.safeParse({ ...validGalleryItemDto, translation: "BSB" })
+        .success,
+    ).toBe(true);
+  });
 });
 
 describe("Tasks #39/#40 schemas — gallery response envelopes (U-GS3/U-GS4)", () => {
@@ -849,6 +899,18 @@ describe("Tasks #39/#40 schemas — gallery response envelopes (U-GS3/U-GS4)", (
       S.GalleryListResponseSchema.parse({ items: [], nextCursor: "eyJ9" }).nextCursor,
     ).toBe("eyJ9");
     expect(S.GalleryListResponseSchema.safeParse({ items: [] }).success).toBe(false);
+  });
+
+  it("items is REQUIRED too (an envelope with no items is a bug, not an empty page)", () => {
+    // An empty page is `{ items: [], nextCursor: null }`. If `items` were `.optional()`,
+    // a handler that forgot to set it would return `{ nextCursor: null }`, and the grid
+    // would crash on `items.map` rather than render zero cards.
+    expect(S.GalleryListResponseSchema.safeParse({ nextCursor: null }).success).toBe(
+      false,
+    );
+    expect(
+      S.GalleryListResponseSchema.safeParse({ items: [], nextCursor: null }).success,
+    ).toBe(true);
   });
 
   it("declares NO hasMore and NO total (a second field that can disagree with nextCursor)", () => {

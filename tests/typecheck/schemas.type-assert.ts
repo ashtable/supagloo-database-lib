@@ -173,6 +173,28 @@ export const galleryItem: GalleryItemDto = {
 // @ts-expect-error "private" is not a GalleryVisibility
 export const badGalleryItem: GalleryItemDto = { ...galleryItem, visibility: "private" };
 
+// REQUIRED-NESS at the TYPE level. The positive literal above is fully populated, so it
+// keeps compiling if a field is loosened to `.optional()` — the exact mutation that lets a
+// handler with an incomplete Prisma `select` render `undefined` on a public card. Each
+// directive below fails as UNUSED the moment its field stops being required, so the type
+// lane catches the loosening too, not only the runtime omit-loop in src/schemas.test.ts.
+// The four chosen are the ones a `select` most plausibly drops.
+const { scriptureBook: _dropBook, ...itemNoBook } = galleryItem;
+// @ts-expect-error scriptureBook is REQUIRED — it drives the public book facet
+export const galleryItemNoBook: GalleryItemDto = itemNoBook;
+
+const { publishedAt: _dropPublishedAt, ...itemNoPublishedAt } = galleryItem;
+// @ts-expect-error publishedAt is REQUIRED — the newest-sort key and the card's date
+export const galleryItemNoPublishedAt: GalleryItemDto = itemNoPublishedAt;
+
+const { thumbnailUrl: _dropThumb, ...itemNoThumb } = galleryItem;
+// @ts-expect-error thumbnailUrl is nullable but NOT optional — the key must be present
+export const galleryItemNoThumb: GalleryItemDto = itemNoThumb;
+
+const { rank: _dropRank, ...itemNoRank } = galleryItem;
+// @ts-expect-error rank is nullable but NOT optional — null means "not the popular sort"
+export const galleryItemNoRank: GalleryItemDto = itemNoRank;
+
 export const galleryList: GalleryListResponse = {
   items: [galleryItem],
   nextCursor: null, // null == genuinely exhausted, not "this page was short"

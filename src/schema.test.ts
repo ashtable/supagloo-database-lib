@@ -27,6 +27,25 @@ function scalarFields(
   return Object.keys(enumObj as Record<string, string>).sort();
 }
 
+/**
+ * Drop every Prisma comment (`//` and the `///` doc form) to end-of-line.
+ *
+ * Load-bearing, not cosmetic: EVERY assertion in this file is a regex over schema TEXT,
+ * and a regex over raw text happily matches a COMMENTED-OUT declaration. Commenting out
+ * the two `@@index` lines left the whole suite green while the datamodel had no sort
+ * indexes at all — which is the entire point of the task-#39 migration. Prisma has no
+ * block-comment syntax, so line-stripping is complete.
+ */
+function stripPrismaComments(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const at = line.indexOf("//");
+      return at === -1 ? line : line.slice(0, at);
+    })
+    .join("\n");
+}
+
 describe("Task #4 schema — prisma validate", () => {
   it("validates the schema with the Prisma engine (exit 0)", () => {
     const res = spawnSync(npx, ["prisma", "validate"], {
@@ -112,9 +131,10 @@ describe("Task #4 schema — model columns (ScalarFieldEnum introspection)", () 
 });
 
 describe("Task #4 schema — declared uniqueness (schema text introspection)", () => {
-  const schema = readFileSync(
-    join(REPO_ROOT, "prisma", "schema.prisma"),
-    "utf8",
+  // Comment-stripped for the same reason as the Task #5 block below: a regex over raw
+  // schema text matches a commented-out declaration just as happily as a live one.
+  const schema = stripPrismaComments(
+    readFileSync(join(REPO_ROOT, "prisma", "schema.prisma"), "utf8"),
   );
 
   it("declares youversionUserId unique on User", () => {
@@ -373,10 +393,24 @@ describe("Task #5 schema — enum value coverage (generated consts)", () => {
 });
 
 describe("Task #5 schema — schema-text introspection", () => {
-  const schema = readFileSync(
+  const rawSchema = readFileSync(
     join(REPO_ROOT, "prisma", "schema.prisma"),
     "utf8",
   );
+  // Every regex below runs over the COMMENT-STRIPPED text, so a commented-out
+  // declaration can never satisfy an assertion. See stripPrismaComments.
+  const schema = stripPrismaComments(rawSchema);
+
+  it("strips comments before matching, so a commented-out declaration cannot pass", () => {
+    // A guard on the guard: if stripPrismaComments ever became a no-op, every
+    // schema-text assertion in this file would silently go back to matching comments.
+    expect(rawSchema).toContain("// sort=popular (the DEFAULT sort)");
+    expect(schema).not.toContain("sort=popular");
+    expect(stripPrismaComments("  // @@index([a, b])")).toBe("  ");
+    expect(stripPrismaComments("  @@index([a, b]) // keep")).toBe(
+      "  @@index([a, b]) ",
+    );
+  });
 
   function enumMembers(name: string): string[] {
     const body = schema.match(
@@ -510,5 +544,55 @@ describe("Task #5 schema — Composition/Scene absence (generated client)", () =
     const p = Prisma as unknown as Record<string, unknown>;
     expect(p.CompositionScalarFieldEnum).toBeUndefined();
     expect(p.SceneScalarFieldEnum).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task #39 — the MIGRATION, not just the datamodel
+// ---------------------------------------------------------------------------
+
+// `schema.prisma` is what the client is generated from; the migration is what the
+// DATABASE gets. They can disagree, and only the migration ships to production, so the
+// committed SQL is asserted separately here. Truncating this file to a bare
+// `-- CreateIndex` comment left the whole suite green, which is why SQL comments are
+// stripped before matching. The indexes actually EXISTING in Postgres, with the right
+// column ORDER, is proven in tests/e2e/schema.e2e.ts against a real migrate deploy.
+describe("Task #39 migration — gallery_sort_indexes SQL", () => {
+  const MIGRATION_DIR = "20260726055955_gallery_sort_indexes";
+
+  /** Strip `--` line comments so a commented-out statement cannot satisfy a regex. */
+  function stripSqlComments(text: string): string {
+    return text
+      .split("\n")
+      .map((line) => {
+        const at = line.indexOf("--");
+        return at === -1 ? line : line.slice(0, at);
+      })
+      .join("\n");
+  }
+
+  const sql = stripSqlComments(
+    readFileSync(
+      join(REPO_ROOT, "prisma", "migrations", MIGRATION_DIR, "migration.sql"),
+      "utf8",
+    ),
+  );
+
+  it("creates both composite indexes with the designed column order", () => {
+    expect(sql).toMatch(
+      /CREATE INDEX "GalleryItem_visibility_publishedAt_id_idx" ON "GalleryItem"\("visibility", "publishedAt", "id"\)/,
+    );
+    expect(sql).toMatch(
+      /CREATE INDEX "GalleryItem_visibility_upvoteCount_id_idx" ON "GalleryItem"\("visibility", "upvoteCount", "id"\)/,
+    );
+    expect(sql.match(/CREATE INDEX/g)).toHaveLength(2);
+  });
+
+  it("adds NOTHING else — no ALTER TABLE, no DROP, no data change", () => {
+    // The migration is additive and reversible by design (drop two indexes). A column
+    // change smuggled in here would ship to production behind an "indexes only" title.
+    for (const forbidden of [/ALTER TABLE/i, /DROP /i, /CREATE TABLE/i, /UPDATE /i]) {
+      expect(sql, `${String(forbidden)} must not appear`).not.toMatch(forbidden);
+    }
   });
 });
