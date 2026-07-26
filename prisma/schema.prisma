@@ -297,7 +297,13 @@ model GalleryItem {
   description        String
   scriptureReference String
   translation        String
-  scriptureBook      String // normalized book code (e.g. GEN) — drives the filter
+  // INTERNAL normalized book code (e.g. GEN). Derived at PUBLISH time from
+  // `scriptureReference` by database-lib's `deriveScriptureBook` (`scripture-book.ts`);
+  // never client-supplied. NOTHING QUERIES IT — the gallery listing offers sort +
+  // free-text `q` and no book filter (the filter was cut 2026-07-26: which books exist
+  // is a property of the translation, YouVersion's authority, not a canon we hardcode).
+  // It rides out on the DTO and may be displayed as text, but it is never a control.
+  scriptureBook      String
   durationSeconds    Int
   videoAssetKey      String
   thumbnailAssetKey  String
@@ -313,6 +319,9 @@ model GalleryItem {
 
   @@index([projectId])
   @@index([ownerId])
+  // RETAINED DELIBERATELY though no query uses it today (the book filter was cut
+  // 2026-07-26): kept against a future book facet, because dropping it would cost a
+  // schema migration deployed to every environment for zero read benefit.
   @@index([scriptureBook])
   // Task #39 — composite sort indexes for the PUBLIC listing, the only endpoint in the
   // system not scoped to one user (every other list narrows by ownerId/userId and rides
