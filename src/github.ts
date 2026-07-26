@@ -1,4 +1,9 @@
 import { createSign } from "node:crypto";
+import {
+  formatGithubRateLimitHeaders,
+  isRetryableGithubStatus,
+  withGithubRetry,
+} from "./github-retry";
 
 /**
  * Shared GitHub App primitives (design-delta §2.3 / §6a / §9-Q1).
@@ -20,24 +25,45 @@ import { createSign } from "node:crypto";
  * explicitly by the caller. Nothing here persists a token.
  */
 
+/**
+ * The shared GitHub rate-limit retry/backoff primitive (plan row 64, §11.7
+ * "one implementation, four consumers"). Re-exported here so every GitHub
+ * caller can reach it from the same module it already imports, and through the
+ * package barrel for the API and DBOS clients.
+ */
+export {
+  isRetryableGithubStatus,
+  githubRetryDelayMs,
+  withGithubRetry,
+  formatGithubRateLimitHeaders,
+  DEFAULT_GITHUB_MAX_ATTEMPTS,
+} from "./github-retry";
+export type { GithubRetryOptions } from "./github-retry";
+
 /** Discriminates the failure modes of the GitHub App primitives. */
-export type GithubAppErrorCode = "TOKEN_EXCHANGE_FAILED";
+export type GithubAppErrorCode = "TOKEN_EXCHANGE_FAILED" | "RATE_LIMITED";
 
 /**
  * Thrown when an installation-token exchange fails. Carries a machine-readable
- * {@link code}. The message never includes the signed App JWT.
+ * {@link code} and, when the failure came from a GitHub response, the upstream
+ * HTTP {@link status} so callers can classify it without re-parsing a message.
+ * The message never includes the signed App JWT.
  */
 export class GithubAppError extends Error {
   readonly code: GithubAppErrorCode;
 
+  /** Upstream HTTP status, when the failure was an HTTP response. */
+  readonly status?: number;
+
   constructor(
     code: GithubAppErrorCode,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; status?: number },
   ) {
     super(message, options);
     this.name = "GithubAppError";
     this.code = code;
+    this.status = options?.status;
   }
 }
 
@@ -139,6 +165,16 @@ export interface MintInstallationTokenOptions {
   fetchImpl?: typeof fetch;
   /** Injectable clock passed through to {@link signAppJwt}. */
   now?: Date;
+  /**
+   * Injectable sleep for the bounded rate-limit backoff (plan row 64). Defaults
+   * to a real timer; unit lanes pass a no-op spy so nothing actually waits.
+   */
+  sleepImpl?: (ms: number) => Promise<void>;
+  /**
+   * Attempt budget for the rate-limit backoff, including the first attempt.
+   * Defaults to {@link DEFAULT_GITHUB_MAX_ATTEMPTS} (4); `1` disables retry.
+   */
+  maxAttempts?: number;
 }
 
 /** The minted, short-lived installation token — returned to the caller, never
@@ -156,7 +192,14 @@ export interface InstallationToken {
  * The returned token is meant to be used immediately and discarded — this module
  * never stores it, and every call performs a fresh exchange (no caching).
  *
- * @throws {GithubAppError} `TOKEN_EXCHANGE_FAILED` on a non-2xx exchange.
+ * A throttled exchange (`429`, or the secondary-limit `403 + Retry-After`) is
+ * retried in-process by {@link withGithubRetry}, honouring GitHub's own delay
+ * with a bounded, capped budget (plan row 64 / D64.1). A 2xx never enters the
+ * retry loop, so the no-caching call counts above are unaffected.
+ *
+ * @throws {GithubAppError} `RATE_LIMITED` when a throttle never cleared within
+ *   the attempt budget (the message carries GitHub's headers verbatim), else
+ *   `TOKEN_EXCHANGE_FAILED`. Both carry the upstream `status`.
  */
 export async function mintInstallationToken(
   opts: MintInstallationTokenOptions,
@@ -171,17 +214,33 @@ export async function mintInstallationToken(
     opts.installationId
   }/access_tokens`;
 
-  const res = await fetchImpl(url, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${jwt}`,
-      accept: "application/vnd.github+json",
-    },
-  });
+  const res = await withGithubRetry(
+    () =>
+      fetchImpl(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${jwt}`,
+          accept: "application/vnd.github+json",
+        },
+      }),
+    { sleepImpl: opts.sleepImpl, maxAttempts: opts.maxAttempts },
+  );
   if (!res.ok) {
+    // Retryable is not the same as throttled: a 5xx that never clears is an
+    // upstream failure, not a rate limit.
+    const throttled =
+      (res.status === 429 || res.status === 403) &&
+      isRetryableGithubStatus(res.status, res.headers);
+    const headerNote = formatGithubRateLimitHeaders(res.headers);
     throw new GithubAppError(
-      "TOKEN_EXCHANGE_FAILED",
-      `installation token exchange failed for installation ${opts.installationId}: ${res.status}`,
+      throttled ? "RATE_LIMITED" : "TOKEN_EXCHANGE_FAILED",
+      // Never interpolate the JWT — see the `Bearer` regression test.
+      `installation token exchange ${
+        throttled ? "was rate-limited" : "failed"
+      } for installation ${opts.installationId}: ${res.status}${
+        headerNote ? ` (${headerNote})` : ""
+      }`,
+      { status: res.status },
     );
   }
 

@@ -1,5 +1,5 @@
 import { generateKeyPairSync, createVerify } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   signAppJwt,
   mintInstallationToken,
@@ -296,5 +296,201 @@ describe("mintInstallationToken", () => {
       expect(err.code).toBeTypeOf("string");
       expect(err.message).not.toContain("Bearer");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rate-limit handling (plan row 64, D64.1/D64.2/D64.4/D64.6).
+//
+// GitHub's SECONDARY (abuse) limits are account-scoped and far tighter than the
+// core limit; they arrive as `403 + Retry-After` (typically 60s), while the
+// primary limit arrives as `429`. D64.1: the CLIENT sleeps, because the DBOS
+// step budget (maxAttempts 4, intervalSeconds 1, backoffRate 2 => ~7s total)
+// cannot honour a 60s Retry-After — so `isPermanentHttpStatus` keeps 403
+// permanent and the two retry layers never multiply.
+//
+// Every sleep is INJECTED, so this suite never actually waits.
+// ---------------------------------------------------------------------------
+
+describe("mintInstallationToken — rate-limit handling (row 64)", () => {
+  const OK = {
+    token: "ghs_stub_inst_42_1",
+    expires_at: "2026-07-18T13:00:00.000Z",
+  };
+
+  const baseArgs = {
+    appId: APP_ID,
+    privateKey: PRIVATE_KEY,
+    installationId: "42",
+    apiBaseUrl: "https://api.github.com",
+    now: NOW,
+  };
+
+  it("retries a 403 + Retry-After, honouring the delay, then succeeds", async () => {
+    const sleepImpl = vi.fn(async () => {});
+    let n = 0;
+    const result = await mintInstallationToken({
+      ...baseArgs,
+      sleepImpl,
+      fetchImpl: fakeFetch(() => {
+        n += 1;
+        if (n === 1) {
+          return new Response(JSON.stringify({ message: "slow down" }), {
+            status: 403,
+            headers: { "retry-after": "1" },
+          });
+        }
+        return new Response(JSON.stringify(OK), { status: 201 });
+      }),
+    });
+
+    expect(n).toBe(2);
+    expect(sleepImpl.mock.calls).toEqual([[1_000]]);
+    expect(result.token).toBe("ghs_stub_inst_42_1");
+  });
+
+  it("backs off a 429 using x-ratelimit-reset, capped at 60s", async () => {
+    const sleepImpl = vi.fn(async () => {});
+    // Two hours out: the raw delta is 7_200_000ms, which the cap must clamp.
+    const reset = Math.floor(Date.now() / 1000) + 7200;
+    let n = 0;
+    const result = await mintInstallationToken({
+      ...baseArgs,
+      sleepImpl,
+      fetchImpl: fakeFetch(() => {
+        n += 1;
+        if (n === 1) {
+          return new Response(JSON.stringify({ message: "rate limited" }), {
+            status: 429,
+            headers: { "x-ratelimit-reset": String(reset) },
+          });
+        }
+        return new Response(JSON.stringify(OK), { status: 201 });
+      }),
+    });
+
+    expect(n).toBe(2);
+    expect(sleepImpl.mock.calls).toEqual([[60_000]]);
+    expect(result.token).toBe("ghs_stub_inst_42_1");
+  });
+
+  it("gives up after maxAttempts and surfaces the Retry-After header verbatim as RATE_LIMITED", async () => {
+    const sleepImpl = vi.fn(async () => {});
+    let n = 0;
+    const call = mintInstallationToken({
+      ...baseArgs,
+      sleepImpl,
+      maxAttempts: 3,
+      fetchImpl: fakeFetch(() => {
+        n += 1;
+        return new Response(JSON.stringify({ message: "abuse detection" }), {
+          status: 403,
+          headers: { "retry-after": "60" },
+        });
+      }),
+    });
+
+    await expect(call).rejects.toBeInstanceOf(GithubAppError);
+    await call.catch((err: GithubAppError) => {
+      expect(err.code).toBe("RATE_LIMITED");
+      expect(err.status).toBe(403);
+      expect(err.message).toContain("60");
+      // The JWT-leak property of `:284-299` must survive the rewritten path.
+      expect(err.message).not.toContain("Bearer");
+    });
+    expect(n).toBe(3);
+    expect(sleepImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a bare permission-denial 403, and carries the status", async () => {
+    const sleepImpl = vi.fn(async () => {});
+    let n = 0;
+    const call = mintInstallationToken({
+      ...baseArgs,
+      sleepImpl,
+      fetchImpl: fakeFetch(() => {
+        n += 1;
+        return new Response(JSON.stringify({ message: "Resource not accessible" }), {
+          status: 403,
+        });
+      }),
+    });
+
+    await expect(call).rejects.toBeInstanceOf(GithubAppError);
+    await call.catch((err: GithubAppError) => {
+      expect(err.code).toBe("TOKEN_EXCHANGE_FAILED");
+      expect(err.status).toBe(403);
+      expect(err.message).not.toContain("Bearer");
+    });
+    expect(n).toBe(1);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("never retries a 401 or a 422, and carries the status on both", async () => {
+    for (const status of [401, 422]) {
+      const sleepImpl = vi.fn(async () => {});
+      let n = 0;
+      const call = mintInstallationToken({
+        ...baseArgs,
+        sleepImpl,
+        fetchImpl: fakeFetch(() => {
+          n += 1;
+          return new Response(JSON.stringify({ message: "nope" }), { status });
+        }),
+      });
+
+      await expect(call).rejects.toBeInstanceOf(GithubAppError);
+      await call.catch((err: GithubAppError) => {
+        expect(err.code).toBe("TOKEN_EXCHANGE_FAILED");
+        expect(err.status).toBe(status);
+      });
+      expect(n).toBe(1);
+      expect(sleepImpl).not.toHaveBeenCalled();
+    }
+  });
+
+  it("classifies an unclearing 5xx as TOKEN_EXCHANGE_FAILED, not RATE_LIMITED", async () => {
+    // Retryable is not the same as throttled: only 429, and a 403 carrying
+    // rate-limit headers, are rate limits. A 502 that never clears is an
+    // upstream failure and must say so.
+    const sleepImpl = vi.fn(async () => {});
+    let n = 0;
+    const call = mintInstallationToken({
+      ...baseArgs,
+      sleepImpl,
+      maxAttempts: 2,
+      fetchImpl: fakeFetch(() => {
+        n += 1;
+        return new Response("upstream boom", { status: 502 });
+      }),
+    });
+
+    await expect(call).rejects.toBeInstanceOf(GithubAppError);
+    await call.catch((err: GithubAppError) => {
+      expect(err.code).toBe("TOKEN_EXCHANGE_FAILED");
+      expect(err.status).toBe(502);
+    });
+    expect(n).toBe(2);
+  });
+
+  it("retries a 5xx and reaches the token", async () => {
+    const sleepImpl = vi.fn(async () => {});
+    let n = 0;
+    const result = await mintInstallationToken({
+      ...baseArgs,
+      sleepImpl,
+      fetchImpl: fakeFetch(() => {
+        n += 1;
+        if (n < 3) {
+          return new Response("upstream boom", { status: 502 });
+        }
+        return new Response(JSON.stringify(OK), { status: 201 });
+      }),
+    });
+
+    expect(n).toBe(3);
+    // No throttle headers => the exponential fallback, 500 then 1000.
+    expect(sleepImpl.mock.calls).toEqual([[500], [1_000]]);
+    expect(result.token).toBe("ghs_stub_inst_42_1");
   });
 });
