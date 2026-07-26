@@ -1473,10 +1473,13 @@ export type PublishGalleryItemRequest = z.infer<
  *  Nothing queries on it: the listing offers sort + free-text `q` and no book filter.
  *
  *  `rank` is 1-based, CONTINUOUS ACROSS PAGES (page 2 of a 24-item page starts at 25),
- *  and non-null ONLY under `sort=popular`: rank is a property of the global popular
- *  ordering, so a client computing `index + 1` would badge the 25th item "#1", and a
- *  "#7" badge under a different ordering would assert something untrue. The `rank <= 3`
- *  threshold and the trophy-at-1 rule are PRESENTATION and live in the UI.
+ *  and non-null ONLY under an UNFILTERED `sort=popular` — it is null under every other
+ *  sort AND null whenever `q` is set. Rank is a property of the UNFILTERED popular
+ *  ordering, so: a client computing `index + 1` would badge the 25th item "#1"; a "#7"
+ *  badge under a different ordering would assert something untrue; and a rank counted
+ *  over SEARCH HITS would badge the 7th match "#7" when it is nowhere near 7th in the
+ *  gallery. The `rank <= 3` threshold and the trophy-at-1 rule are PRESENTATION and
+ *  live in the UI.
  *
  *  `viewerHasUpvoted` is false for an anonymous viewer (no query is issued at all).
  *  `thumbnailUrl` is a short-lived presigned GET URL (the anonymous grid cannot use the
