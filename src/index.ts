@@ -87,6 +87,11 @@ export * from "./job-stages";
 // table and the DBOS static registry import the SAME constants (the "shared fixture").
 export * from "./workflows";
 
+// Names of database constraints another service must recognize at runtime (task #49).
+// A raw-SQL index has no field list for Prisma to report, so P2002 carries the INDEX
+// NAME — which makes the name a cross-repo contract, not an implementation detail.
+export * from "./constraints";
+
 // Production default manifest for a freshly-scaffolded blank project (design-delta
 // §2.11). Used by the API's scaffold-enqueue path and written by the scaffold workflow.
 export { buildBlankManifest } from "./manifest-defaults";

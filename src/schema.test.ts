@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -568,6 +568,153 @@ describe("Task #5 schema — schema-text introspection", () => {
     // Read only via `GET /v1/gallery/:id`, which already has the pkey. A jsonb index
     // would cost every publish a write for no read.
     expect(modelBlock("GalleryItem") as string).not.toMatch(/@@index\(\[makingOf\]\)/);
+  });
+
+  // -------------------------------------------------------------------------
+  // Task #42 — Session.expiresAt index (the scheduled cleanup workflow's purge)
+  // -------------------------------------------------------------------------
+
+  it("declares @@index([expiresAt]) on Session (U-SE1)", () => {
+    // `cleanupOrphanedAssetsWorkflow` purges `Session WHERE "expiresAt" < now()` daily.
+    // Session has no index on that column today, so the purge is a full sequential scan
+    // of the busiest small table in the schema — every sign-in writes a row and every
+    // authenticated request re-stamps one (sessions are SLIDING).
+    const block = modelBlock("Session");
+    expect(block, "model Session should exist").toBeDefined();
+    expect(block as string).toMatch(/@@index\(\[expiresAt\]\)/);
+  });
+
+  it("keeps Session's userId index and adds no column (U-SE2)", () => {
+    // Additive: `@@index([userId])` serves "all sessions for this user" (sign-out-all)
+    // and `tokenHash @unique` serves the per-request lookup. Neither is replaced.
+    const block = modelBlock("Session") as string;
+    expect(block).toMatch(/@@index\(\[userId\]\)/);
+    expect(block).toMatch(/tokenHash\s+String\s+@unique/);
+    expect(
+      scalarFields(Prisma.SessionScalarFieldEnum).length,
+      "Session is a 6-column table; an index migration must not widen it",
+    ).toBe(6);
+  });
+
+  // -------------------------------------------------------------------------
+  // Task #49 — the Project active-repo PARTIAL unique index
+  // -------------------------------------------------------------------------
+
+  it("does NOT declare a TOTAL @@unique on (ownerId, repoOwner, repoName) (U-PU1)", () => {
+    // The Prisma DSL's `@@unique` has no `where`, so declaring it here would create a
+    // TOTAL unique — and a total unique counts soft-deleted rows. A user who deletes a
+    // project and then re-imports the same repo would be permanently blocked, which is
+    // the exact opposite of the invariant task #49 is adding. The index is raw SQL in
+    // the migration instead; this assertion keeps a well-meaning "the schema should
+    // declare its own constraints" edit from silently breaking delete-then-recreate.
+    const block = modelBlock("Project") as string;
+    expect(block).not.toMatch(/@@unique\(\[ownerId, repoOwner, repoName\]\)/);
+    expect(block).not.toMatch(/@@unique\(\[[^\]]*repoName[^\]]*\]\)/);
+    // The pre-existing per-owner slug unique is untouched.
+    expect(block).toMatch(/@@unique\(\[ownerId, slug\]\)/);
+  });
+
+  it("records the raw partial unique index in a Project doc comment (U-PU2)", () => {
+    // The datamodel cannot express the index, so `prisma migrate diff` will now report
+    // it as a permanent extra DB index (on top of the pre-existing out-of-Prisma
+    // `noop_proof` line). Without this note the next reader "reconciles" the diff by
+    // dropping the index — so the note is asserted, on the RAW (un-stripped) text.
+    const projectBlockRaw = rawSchema.match(
+      /model Project \{[\s\S]*?\n\}/,
+    )?.[0] as string;
+    expect(projectBlockRaw, "model Project should exist").toBeDefined();
+    expect(projectBlockRaw).toContain(
+      "Project_ownerId_repoOwner_repoName_active_key",
+    );
+    expect(projectBlockRaw).toMatch(/deletedAt.{0,40}IS NULL/s);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tasks #42 + #49 — the ONE bundled index migration
+// ---------------------------------------------------------------------------
+// Bundled deliberately (brief §0.5/§10 R1): db-lib is a `file:` dependency nested in
+// api and dbos and the one-shot Compose `migrate` service deploys from the api image,
+// so every db-lib release is a five-step submodule + image-rebuild chain. Two index
+// migrations would mean running that chain twice and invite a half-applied state.
+//
+// Same rule as the task #39 / Turn 16a blocks: schema.prisma generates the client, the
+// MIGRATION is what the database gets, and only the migration ships. The directory is
+// resolved by name suffix (not a hardcoded timestamp) and "exactly one" is asserted.
+describe("Tasks #42/#49 migration — session_expiry_and_project_repo_indexes SQL", () => {
+  const MIGRATION_SUFFIX = "_session_expiry_and_project_repo_indexes";
+
+  function stripSqlComments(text: string): string {
+    return text
+      .split("\n")
+      .map((line) => {
+        const at = line.indexOf("--");
+        return at === -1 ? line : line.slice(0, at);
+      })
+      .join("\n");
+  }
+
+  /** Directories matching the suffix. Read lazily and existence-guarded: a module-scope
+   *  readFileSync on a not-yet-authored path would fail this whole FILE with an error
+   *  instead of failing these tests with assertions. */
+  function migrationDirs(): string[] {
+    const root = join(REPO_ROOT, "prisma", "migrations");
+    if (!existsSync(root)) return [];
+    return readdirSync(root).filter((d) => d.endsWith(MIGRATION_SUFFIX));
+  }
+
+  function sql(): string {
+    const dirs = migrationDirs();
+    if (dirs.length !== 1) return "";
+    const file = join(
+      REPO_ROOT,
+      "prisma",
+      "migrations",
+      dirs[0] as string,
+      "migration.sql",
+    );
+    return existsSync(file) ? stripSqlComments(readFileSync(file, "utf8")) : "";
+  }
+
+  it("is exactly ONE migration directory (U-MIG1)", () => {
+    expect(
+      migrationDirs(),
+      "rows 42 and 49 ship ONE bundled migration, not two",
+    ).toHaveLength(1);
+  });
+
+  it("creates the Session expiresAt index (U-MIG2)", () => {
+    expect(sql()).toMatch(
+      /CREATE INDEX "Session_expiresAt_idx" ON "Session"\("expiresAt"\)/,
+    );
+  });
+
+  it("creates the Project active-repo PARTIAL UNIQUE index (U-MIG3)", () => {
+    // All four properties matter and each has a distinct failure mode:
+    //   UNIQUE      — an INDEX would make the migration a no-op for the race.
+    //   column order— (ownerId, repoOwner, repoName) also serves the per-owner lookup.
+    //   the name    — it is what P2002.meta.target carries into the API's 409 mapping.
+    //   the WHERE   — without it, a soft-deleted project blocks re-creating that repo.
+    expect(sql()).toMatch(
+      /CREATE UNIQUE INDEX "Project_ownerId_repoOwner_repoName_active_key"\s+ON "Project"\("ownerId", "repoOwner", "repoName"\)\s+WHERE "deletedAt" IS NULL/,
+    );
+  });
+
+  it("adds NOTHING else — two CREATEs, no ALTER, no DROP, and no data fixup (U-MIG4)", () => {
+    const text = sql();
+    expect(text.match(/CREATE (UNIQUE )?INDEX/g) ?? []).toHaveLength(2);
+    for (const forbidden of [
+      /ALTER TABLE/i,
+      /DROP /i,
+      /CREATE TABLE/i,
+      // D49.3: pre-existing duplicates are resolved by hand BEFORE deploying (the
+      // preflight found none). A dedupe DELETE hidden inside an "indexes only"
+      // migration would silently destroy production rows.
+      /\bUPDATE\b/i,
+      /\bDELETE\b/i,
+    ]) {
+      expect(text, `${String(forbidden)} must not appear`).not.toMatch(forbidden);
+    }
   });
 });
 

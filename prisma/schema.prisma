@@ -59,6 +59,12 @@ model Session {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  // Task #42: the daily cleanupOrphanedAssets workflow purges `Session WHERE
+  // "expiresAt" < now()`. Sessions are SLIDING — every authenticated request
+  // re-stamps expiresAt — so this is the busiest small table in the schema, and the
+  // purge without this index is a full sequential scan of it. The purge keys on
+  // expiresAt ONLY; createdAt/lastUsedAt would evict live users.
+  @@index([expiresAt])
 }
 
 // GitHub App installation (§2.3). installationId is the ONLY stored
@@ -208,6 +214,34 @@ model Project {
 
   @@unique([ownerId, slug]) // slug is unique PER OWNER, not globally
   @@index([ownerId])
+  // Task #49 — "one repo <-> one project PER OWNER", enforced by a RAW-SQL PARTIAL
+  // UNIQUE index that the Prisma DSL cannot express (`@@unique` has no `where`):
+  //
+  //   CREATE UNIQUE INDEX "Project_ownerId_repoOwner_repoName_active_key"
+  //     ON "Project"("ownerId", "repoOwner", "repoName")
+  //     WHERE "deletedAt" IS NULL;
+  //
+  // It lives in migration `..._session_expiry_and_project_repo_indexes`. The name is a
+  // cross-repo contract, exported as PROJECT_ACTIVE_REPO_UNIQUE_INDEX with its reader
+  // `isUniqueViolationOn` (src/constraints.ts): the API matches a P2002 against it to
+  // answer the losing concurrent POST /v1/projects with 409 project_exists instead of a
+  // raw 500. MEASURED: on Prisma 7.8.0 + @prisma/adapter-pg the violated name is NOT in
+  // `meta.target` (which does not exist) — it is only in
+  // `meta.driverAdapterError.cause.originalMessage`. Use the exported reader.
+  //
+  // Do NOT "fix" this by adding `@@unique([ownerId, repoOwner, repoName])`: a TOTAL
+  // unique counts soft-deleted rows, so deleting a project would permanently block
+  // ever re-creating one for that repo. The `WHERE "deletedAt" IS NULL` predicate is
+  // the whole point.
+  //
+  // MEASURED (Prisma 7.8.0, both directions, against a pristine scratch DB carrying
+  // exactly the committed migrations): `prisma migrate diff --from-config-datasource
+  // --to-schema` reports "No difference detected." (exit 0). Prisma's diff engine does
+  // NOT treat a predicated index it cannot model as drift, so this index costs no
+  // standing diff noise. The only permanent diff entry against the shared dev DB
+  // remains DBOS's out-of-Prisma `noop_proof` table. Re-measure on a Prisma upgrade —
+  // if a future engine starts reporting it, that is expected and must not be
+  // "reconciled" by dropping the index.
 }
 
 model ProjectVersion {

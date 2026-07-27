@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import * as DbLib from "./index";
+// Namespace import alongside the named ones below: constants added by a task in
+// flight are read as `Workflows.X` so a missing export reads `undefined` (a clean
+// assertion failure) instead of an ESM link error during the RED phase — the same
+// convention src/schema.test.ts uses for generated enums.
+import * as Workflows from "./workflows";
 import {
   AI_GENERATION_QUEUE_NAME,
   AI_GENERATION_WORKFLOW_BY_KIND,
@@ -223,5 +228,56 @@ describe("Task #36 workflows — render name/queue + enqueue target", () => {
     expect(DbLib.RENDER_WORKFLOW_NAME).toBe("render");
     expect(DbLib.RENDER_QUEUE_NAME).toBe("render");
     expect(DbLib.RENDER_WORKFLOW_TARGET.workflowName).toBe("render");
+  });
+});
+
+// Task #42: the cleanup/janitor workflow's name + its own `maintenance` queue.
+//
+// Unlike every other workflow in this file, this one is never enqueued from an HTTP
+// request — it is STATICALLY REGISTERED and then driven by DBOS's scheduler inside the
+// dbos worker. So there is no kind→target MAP and no API-side enqueue lookup. The name
+// still lives here for the same reason the others do: the dbos static registry pins it
+// against this constant, so the registry and the scheduler can never disagree, and the
+// name is greppable from any repo.
+
+describe("Task #42 workflows — cleanupOrphanedAssets name + maintenance queue", () => {
+  it("pins the cleanup workflow name", () => {
+    expect(Workflows.CLEANUP_ORPHANED_ASSETS_WORKFLOW_NAME).toBe(
+      "cleanupOrphanedAssets",
+    );
+  });
+
+  it("pins the maintenance queue name", () => {
+    expect(Workflows.MAINTENANCE_QUEUE_NAME).toBe("maintenance");
+  });
+
+  it("keeps the maintenance queue distinct from the three work queues", () => {
+    // A janitor sharing the `render` queue would occupy the single render worker slot
+    // (workerConcurrency 1) and stall a user-visible render; sharing `git-ops` or
+    // `ai-generation` would consume a slot a user request is waiting on. Its own queue
+    // is what makes the destructive daily sweep unable to starve real work.
+    expect(Workflows.MAINTENANCE_QUEUE_NAME).not.toBe(GIT_OPS_QUEUE_NAME);
+    expect(Workflows.MAINTENANCE_QUEUE_NAME).not.toBe(AI_GENERATION_QUEUE_NAME);
+    expect(Workflows.MAINTENANCE_QUEUE_NAME).not.toBe(RENDER_QUEUE_NAME);
+  });
+
+  it("is in NEITHER kind→workflow routing table (it is scheduled, never enqueued)", () => {
+    // Pinned as an absence on purpose: both tables are `satisfies Partial<Record<…Kind,
+    // …>>` and both are documented as COMPLETE. A future reader "completing" them with
+    // the janitor would imply an API caller can enqueue a destructive S3 sweep.
+    const names = [
+      ...Object.values(GIT_OPS_WORKFLOW_BY_KIND),
+      ...Object.values(AI_GENERATION_WORKFLOW_BY_KIND),
+    ].map((t) => t.workflowName);
+    expect(names).not.toContain(
+      Workflows.CLEANUP_ORPHANED_ASSETS_WORKFLOW_NAME,
+    );
+  });
+
+  it("re-exports both constants from the barrel", () => {
+    expect(DbLib.CLEANUP_ORPHANED_ASSETS_WORKFLOW_NAME).toBe(
+      "cleanupOrphanedAssets",
+    );
+    expect(DbLib.MAINTENANCE_QUEUE_NAME).toBe("maintenance");
   });
 });
