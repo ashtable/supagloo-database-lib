@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GalleryMakingOfSchema, createPrismaClient } from "../../src/index";
+// Namespace import for constants added by a task in flight: a missing export reads
+// `undefined` (clean assertion failure) instead of taking the whole spec down with an
+// ESM link error during the RED phase.
+import * as DbLib from "../../src/index";
 
 // End-to-end proof of the Prisma schema against the real Compose Postgres:
 // applies the committed migrations with `prisma migrate deploy`, then exercises
@@ -49,17 +53,24 @@ async function makeUser(tag: string) {
   });
 }
 
-async function makeProject(ownerId: string, slug: string) {
+// `repo` defaults to the historical `ashtable/<slug>` so every pre-existing call site
+// keeps its exact behaviour; task #49's tests need to drive the repo triple directly.
+async function makeProject(
+  ownerId: string,
+  slug: string,
+  repo?: { repoOwner?: string; repoName?: string; deletedAt?: Date },
+) {
   return client.project.create({
     data: {
       slug,
       ownerId,
       name: slug,
-      repoOwner: "ashtable",
-      repoName: slug,
+      repoOwner: repo?.repoOwner ?? "ashtable",
+      repoName: repo?.repoName ?? slug,
       repoVisibility: "private",
       createdFrom: "blank",
       currentBranch: "v0.0.1",
+      ...(repo?.deletedAt ? { deletedAt: repo.deletedAt } : {}),
     },
   });
 }
@@ -203,6 +214,221 @@ async function indexColumns(
   }
   return byIndex;
 }
+
+/**
+ * Per-index UNIQUEness and the partial predicate, straight out of the catalog.
+ *
+ * `indexColumns` above answers "which columns, in what order"; it cannot distinguish a
+ * plain index from a unique one, nor a full index from a PARTIAL one. Both distinctions
+ * are the entire content of task #49: a non-unique index enforces nothing, and a
+ * non-partial unique would permanently block re-creating a repo whose project was
+ * soft-deleted. `pg_get_expr(indpred, …)` renders the `WHERE` clause the same way
+ * Postgres normalized it, so it is compared as a normalized string, not as authored SQL.
+ */
+async function indexFacts(
+  table: string,
+): Promise<Record<string, { unique: boolean; predicate: string | null }>> {
+  const rows = await client.$queryRawUnsafe<
+    Array<{ index_name: string; is_unique: boolean; predicate: string | null }>
+  >(
+    `SELECT i.relname AS index_name,
+            ix.indisunique AS is_unique,
+            pg_get_expr(ix.indpred, ix.indrelid, true) AS predicate
+       FROM pg_class t
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       JOIN pg_index ix ON ix.indrelid = t.oid
+       JOIN pg_class i ON i.oid = ix.indexrelid
+      WHERE n.nspname = 'public' AND t.relname = $1`,
+    table,
+  );
+  const byIndex: Record<string, { unique: boolean; predicate: string | null }> =
+    {};
+  for (const row of rows) {
+    byIndex[row.index_name] = {
+      unique: row.is_unique,
+      predicate: row.predicate,
+    };
+  }
+  return byIndex;
+}
+
+// ---------------------------------------------------------------------------
+// Task #42 — Session.expiresAt index, IN the database
+// ---------------------------------------------------------------------------
+// The daily cleanup workflow purges `Session WHERE "expiresAt" < now()`. Session is the
+// busiest small table in the schema (a row per sign-in, re-stamped on every
+// authenticated request because sessions are sliding), so the purge without this index
+// is a full sequential scan. The schema-text and migration-SQL assertions live in
+// src/schema.test.ts; this is the one place that asks the running database.
+describe("e2e: Task #42 Session.expiresAt index in Postgres", () => {
+  it("created Session_expiresAt_idx on expiresAt (E-SE1)", async () => {
+    const indexes = await indexColumns("Session");
+    expect(
+      indexes["Session_expiresAt_idx"],
+      "Session_expiresAt_idx missing from the DATABASE (did migrate deploy run?)",
+    ).toEqual(["expiresAt"]);
+  });
+
+  it("made it a plain, non-partial index — not a unique", async () => {
+    // A UNIQUE here would reject two sessions that happen to expire in the same
+    // millisecond, i.e. two tabs signing in together. A PARTIAL one would silently not
+    // cover the purge predicate it exists for.
+    const facts = await indexFacts("Session");
+    expect(facts["Session_expiresAt_idx"]?.unique).toBe(false);
+    expect(facts["Session_expiresAt_idx"]?.predicate).toBeNull();
+  });
+
+  it("kept the pre-existing userId index and tokenHash unique (additive migration)", async () => {
+    const indexes = await indexColumns("Session");
+    expect(indexes["Session_userId_idx"]).toEqual(["userId"]);
+    expect(indexes["Session_tokenHash_key"]).toEqual(["tokenHash"]);
+    expect(indexes["Session_pkey"]).toEqual(["id"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task #49 — the Project active-repo PARTIAL UNIQUE index, IN the database
+// ---------------------------------------------------------------------------
+// This is the DB-level backing for the "one repo ↔ one project per owner" invariant that
+// `POST /v1/projects` previously enforced with a findFirst-then-create outside the write
+// transaction — a TOCTOU two concurrent requests both pass. Text assertions cannot prove
+// a race is closed; only the running database can.
+describe("e2e: Task #49 Project active-repo partial unique index in Postgres", () => {
+  const INDEX = "Project_ownerId_repoOwner_repoName_active_key";
+
+  it("exposes the index name as a shared constant matching the deployed index", () => {
+    // The API maps P2002 → 409 by matching `meta.target` against this constant.
+    expect(DbLib.PROJECT_ACTIVE_REPO_UNIQUE_INDEX).toBe(INDEX);
+  });
+
+  it("created it UNIQUE, PARTIAL on deletedAt IS NULL, over the three columns (E-PU1)", async () => {
+    const indexes = await indexColumns("Project");
+    expect(
+      indexes[INDEX],
+      "the partial unique index is missing from the DATABASE (did migrate deploy run?)",
+    ).toEqual(["ownerId", "repoOwner", "repoName"]);
+
+    const facts = await indexFacts("Project");
+    expect(facts[INDEX]?.unique, "a non-unique index enforces nothing").toBe(
+      true,
+    );
+    // Postgres normalizes the predicate; this is `pg_get_expr(..., pretty := true)`'s
+    // exact rendering (pg_get_indexdef would wrap it in parens — measured, not guessed).
+    // The predicate is the difference between "a soft-deleted project blocks that repo
+    // forever" and the delete-then-recreate flow the product depends on, so it is
+    // asserted as a value, not merely as "is partial".
+    expect(facts[INDEX]?.predicate).toBe('"deletedAt" IS NULL');
+  });
+
+  it("REJECTS a second ACTIVE project for the same (ownerId, repoOwner, repoName) (E-PU2)", async () => {
+    const u = await makeUser("repo-race");
+    await makeProject(u.id, "race-a", {
+      repoOwner: "ashtable",
+      repoName: `race-${RUN}`,
+    });
+    // Different slug (so the pre-existing ownerId+slug unique cannot be what fires),
+    // same repo triple — exactly the losing concurrent POST /v1/projects.
+    let caught: unknown;
+    try {
+      await makeProject(u.id, "race-b", {
+        repoOwner: "ashtable",
+        repoName: `race-${RUN}`,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught, "the duplicate active project was ACCEPTED").toBeDefined();
+    expect((caught as { code?: string }).code).toBe("P2002");
+
+    // The load-bearing half for the API. MEASURED, not assumed: on Prisma 7.8.0 with
+    // @prisma/adapter-pg there is NO `meta.target` at all — the violated index name is
+    // only reachable through `meta.driverAdapterError.cause.originalMessage`. A mapper
+    // reading `err.meta.target` gets `undefined` and falls through to a 500, and no
+    // fixture-based unit test would catch it. So the REAL error is fed to the shipped
+    // reader here, which is what makes the unit fixtures in src/constraints.test.ts
+    // trustworthy.
+    expect((caught as { meta?: { target?: unknown } }).meta?.target).toBeUndefined();
+    expect(DbLib.uniqueViolationIndexName(caught)).toBe(INDEX);
+    expect(DbLib.isUniqueViolationOn(caught, INDEX)).toBe(true);
+  });
+
+  it("distinguishes this index from the per-owner slug unique on the same table (E-PU2b)", async () => {
+    // Both uniques live on Project and both can fire from one `create`. If the reader
+    // could not tell them apart, a duplicate SLUG would be answered with "a project
+    // already exists for this repository" — a wrong, and confusing, 409.
+    const u = await makeUser("repo-slug-vs-repo");
+    await makeProject(u.id, "same-slug", {
+      repoOwner: "ashtable",
+      repoName: `slugdiff-a-${RUN}`,
+    });
+    let caught: unknown;
+    try {
+      await makeProject(u.id, "same-slug", {
+        repoOwner: "ashtable",
+        repoName: `slugdiff-b-${RUN}`,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as { code?: string }).code).toBe("P2002");
+    expect(DbLib.uniqueViolationIndexName(caught)).toBe("Project_ownerId_slug_key");
+    expect(DbLib.isUniqueViolationOn(caught, INDEX)).toBe(false);
+  });
+
+  it("ALLOWS the same repo again once the first project is SOFT-DELETED (E-PU3)", async () => {
+    const u = await makeUser("repo-recreate");
+    const first = await makeProject(u.id, "recreate-a", {
+      repoOwner: "ashtable",
+      repoName: `recreate-${RUN}`,
+    });
+    await client.project.update({
+      where: { id: first.id },
+      data: { deletedAt: new Date() },
+    });
+    // Delete-then-recreate is a real product flow (10a's delete action, then importing
+    // the same repo back). A TOTAL unique would block it forever — this is precisely
+    // why the index carries `WHERE "deletedAt" IS NULL`.
+    const second = await makeProject(u.id, "recreate-b", {
+      repoOwner: "ashtable",
+      repoName: `recreate-${RUN}`,
+    });
+    expect(second.deletedAt).toBeNull();
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it("ALLOWS two SOFT-DELETED rows for the same repo (the predicate really excludes them) (E-PU4)", async () => {
+    const u = await makeUser("repo-tombstones");
+    const when = new Date();
+    await makeProject(u.id, "tomb-a", {
+      repoOwner: "ashtable",
+      repoName: `tomb-${RUN}`,
+      deletedAt: when,
+    });
+    const b = await makeProject(u.id, "tomb-b", {
+      repoOwner: "ashtable",
+      repoName: `tomb-${RUN}`,
+      deletedAt: when,
+    });
+    expect(b.deletedAt).not.toBeNull();
+    expect(
+      await client.project.count({
+        where: { ownerId: u.id, repoName: `tomb-${RUN}` },
+      }),
+    ).toBe(2);
+  });
+
+  it("ALLOWS the same repo for a DIFFERENT owner (the invariant is per-owner) (E-PU5)", async () => {
+    // design-delta §2.6 specifies uniqueness only on (ownerId, slug); task #49 adds
+    // "one repo ↔ one project PER OWNER", not a global claim on a GitHub repo path.
+    const a = await makeUser("repo-owner-a");
+    const b = await makeUser("repo-owner-b");
+    const shared = { repoOwner: "ashtable", repoName: `shared-${RUN}` };
+    const pa = await makeProject(a.id, "shared-a", shared);
+    const pb = await makeProject(b.id, "shared-b", shared);
+    expect(pa.repoName).toBe(pb.repoName);
+    expect(pa.ownerId).not.toBe(pb.ownerId);
+  });
+});
 
 // The two composite sort indexes ARE the task-#39 migration. Every other assertion
 // about them in this repo reads TEXT — the schema file or the migration SQL — and text

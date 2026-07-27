@@ -198,3 +198,30 @@ export const RENDER_WORKFLOW_TARGET = {
   workflowName: RENDER_WORKFLOW_NAME,
   queueName: RENDER_QUEUE_NAME,
 } as const satisfies RenderWorkflowTarget;
+
+/**
+ * The maintenance janitor's routing constants (task #42, design-delta §7 workflow 10).
+ *
+ * `cleanupOrphanedAssetsWorkflow` deletes the S3 objects of failed/canceled jobs past a
+ * retention window and purges `Session` rows past `expiresAt`. It is the ONLY S3 delete
+ * path in the whole design.
+ *
+ * It differs from every other entry in this file in one way that matters: it is never
+ * enqueued from an HTTP request. There is no `kind` to dispatch on and no API-side
+ * lookup table — the dbos worker registers it statically and DBOS's own scheduler fires
+ * it. So there is deliberately no kind→target MAP and no `*_WORKFLOW_TARGET` object
+ * here; adding one would imply a caller can trigger a destructive sweep on demand.
+ *
+ * The name still belongs in this shared file for the same reason all the others do: the
+ * dbos static registry pins `WORKFLOW_NAMES.cleanupOrphanedAssets` against this exact
+ * constant, so the registry, the scheduler registration and any operator-facing
+ * `listWorkflows` filter can never disagree on the string.
+ *
+ * `maintenance` is its OWN queue, not a lane on an existing one. Sharing `render` would
+ * consume the single render worker slot (`workerConcurrency: 1`) and stall a user-visible
+ * render behind a janitor; sharing `git-ops`/`ai-generation` would take a slot a user
+ * request is waiting on.
+ */
+export const CLEANUP_ORPHANED_ASSETS_WORKFLOW_NAME =
+  "cleanupOrphanedAssets" as const;
+export const MAINTENANCE_QUEUE_NAME = "maintenance" as const;
