@@ -1484,6 +1484,18 @@ export type PublishGalleryItemRequest = z.infer<
  *  `viewerHasUpvoted` is false for an anonymous viewer (no query is issued at all).
  *  `thumbnailUrl` is a short-lived presigned GET URL (the anonymous grid cannot use the
  *  auth-scoped `GET /v1/files/presign-download`), and is null when it cannot be signed. */
+/** The public projection of a gallery item's owner. Named (rather than inline) because
+ *  the Turn-16a watch page extends it with `publicVideoCount` and the two shapes must
+ *  provably share a base — see `GalleryItemDetailDtoSchema`.
+ *
+ *  KNOWN DESIGN GAP (unchanged): the wireframes draw an `@handle`; no such column exists
+ *  on `User`, so `displayName` is the honest stand-in. */
+export const GalleryOwnerSchema = z.object({
+  displayName: z.string(),
+  avatarInitials: z.string(),
+});
+export type GalleryOwner = z.infer<typeof GalleryOwnerSchema>;
+
 export const GalleryItemDtoSchema = z.object({
   id: z.string(),
   renderJobId: z.string(),
@@ -1500,10 +1512,7 @@ export const GalleryItemDtoSchema = z.object({
   thumbnailUrl: z.string().nullable(),
   rank: z.number().int().nullable(),
   viewerHasUpvoted: z.boolean(),
-  owner: z.object({
-    displayName: z.string(),
-    avatarInitials: z.string(),
-  }),
+  owner: GalleryOwnerSchema,
 });
 export type GalleryItemDto = z.infer<typeof GalleryItemDtoSchema>;
 
@@ -1515,6 +1524,167 @@ export const GalleryItemResponseSchema = z.object({
   item: GalleryItemDtoSchema,
 });
 export type GalleryItemResponse = z.infer<typeof GalleryItemResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Turn 16a — the "making of" snapshot (GalleryItem.makingOf) + the detail DTO
+// ---------------------------------------------------------------------------
+//
+// The watch page (`/gallery/:id`) renders WHERE THE VIDEO CAME FROM: the scripture text,
+// the scene breakdown, and chips for narrator voice / music / captions. None of that is
+// on `GalleryItem` — it lives in the project's `supagloo.project.json` manifest, in the
+// user's GitHub repo.
+//
+// It is snapshotted ONCE, at publish time, by the authenticated owner (who already has an
+// installation token), and stored on the row. The public read never touches GitHub:
+//   - a public page must not hold, mint, or imply an installation token; and
+//   - re-reading per view would put a GitHub round trip on an anonymous, crawlable route
+//     — and would show TODAY's manifest under a video rendered from an older one, which
+//     is the more subtle lie of the two.
+//
+// The snapshot is BEST EFFORT. A missing/failed/corrupt manifest read leaves the column
+// NULL and the publish still succeeds; the watch page then omits those sections. Every
+// item published before this column existed is `null` for the same reason, so `null` is a
+// permanent, first-class case — never a defect to backfill away.
+//
+// DELIBERATELY ABSENT, both recorded as documented gaps rather than invented here:
+//   - a VISUAL-STYLE field. The design draws a `Cosmic visuals` chip; nothing in the
+//     manifest backs it (scenes carry a per-scene `visualPrompt`, which is a prompt, not
+//     a style). Chips render conditionally and that one is simply not emitted.
+//   - a per-scene IMAGE. The design's scene tiles are deterministic gradients, so there
+//     is no asset key to snapshot and no presigned-URL-per-scene to sign on a public page.
+
+/** The C0 controls the snapshot's display strings EXEMPT: tab, LF, CR — and only those.
+ *  A scripture paragraph joined from several scenes may legitimately carry a newline. */
+const JSONB_TEXT_EXEMPT_CONTROL_CODES: readonly number[] = [
+  0x09, // TAB
+  0x0a, // LF
+  0x0d, // CR
+];
+
+/** C0 (U+0000–U+001F) + DEL (U+007F) less the exempt codes, DERIVED from that list so the
+ *  class and its documentation cannot drift apart. */
+const JSONB_FORBIDDEN_CONTROL_CHARS = new RegExp(
+  `[${[...Array.from({ length: 32 }, (_, i) => i), 0x7f]
+    .filter((code) => !JSONB_TEXT_EXEMPT_CONTROL_CODES.includes(code))
+    .map((code) => `\\u${code.toString(16).padStart(4, "0")}`)
+    .join("")}]`,
+);
+
+/** A UTF-16 surrogate code unit that is not part of a well-formed pair. `JSON.parse`
+ *  produces these happily from `"\ud800"`, which is how one reaches a manifest field. */
+const JSONB_UNPAIRED_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * A non-empty display string this library is willing to write into a `jsonb` column.
+ *
+ * THREE clauses, THREE different justifications — conflating them would be dishonest:
+ *
+ *  1. **`U+0000` is a hard Postgres error.** MEASURED against the Compose Postgres 17 on
+ *     2026-07-26: `SELECT ('{"a":"x' || E'\\u0000' || 'y"}')::jsonb` →
+ *     `ERROR: unsupported Unicode escape sequence / DETAIL:   cannot be converted to
+ *     text`. A NUL surviving into this snapshot is a FAILED PUBLISH INSERT, not a
+ *     cosmetic problem. Non-negotiable.
+ *  2. **The rest of C0 + DEL is POLICY**, and it deliberately matches the api's
+ *     `src/postgres-text.ts` rule so the two boundaries cannot disagree about what a
+ *     display string may contain. None of them carries display meaning here, and one
+ *     predicate beats a carve-out the next control character walks around.
+ *  3. **An unpaired surrogate is refused for HONESTY, not safety** — it is not
+ *     well-formed text, and accepting it would validate something no consumer can render
+ *     and the driver would silently transcode.
+ *
+ * WHY IT IS DUPLICATED rather than imported: the api's module is a *consumer's* module
+ * (this library cannot import from it), it gates REQUEST-derived strings at Fastify
+ * boundaries with 400 error contracts, and this value is SERVER-built from a repo file
+ * and never crosses a request boundary. Two boundaries, one rule, stated in both places
+ * — if either changes, the other's tests say so, because both enumerate the class.
+ */
+function jsonbSafeText(max: number) {
+  return z
+    .string()
+    .min(1)
+    .max(max)
+    .refine((v) => !JSONB_FORBIDDEN_CONTROL_CHARS.test(v), {
+      message: "must not contain control characters (tab, newline and CR excepted)",
+    })
+    .refine((v) => !JSONB_UNPAIRED_SURROGATE.test(v), {
+      message: "must not contain an unpaired surrogate",
+    });
+}
+
+/** One scene tile on the watch page's HOW IT WAS MADE grid.
+ *
+ *  `index` is 1-based and is the number PRINTED on the tile, so it is a display value,
+ *  not an array offset. `durationSeconds` mirrors the manifest's own `positive()` number
+ *  (fractional durations are real). There is NO image: the tiles are deterministic
+ *  gradients derived from `index`, which is why this shape carries no asset key. */
+export const GalleryMakingOfSceneSchema = z.object({
+  index: z.number().int().min(1),
+  name: jsonbSafeText(120),
+  durationSeconds: z.number().positive(),
+});
+export type GalleryMakingOfScene = z.infer<typeof GalleryMakingOfSceneSchema>;
+
+/**
+ * The value stored in `GalleryItem.makingOf` — a bounded, versioned manifest snapshot.
+ *
+ * `version` is the literal `1` and REJECTS anything else. That is the whole point of
+ * carrying it: without the literal, a v2 snapshot written by a newer API would be
+ * half-read by an older reader — recognized fields parse, unrecognized ones are stripped,
+ * and the page renders a confident lie. Rejecting is what lets a reader degrade honestly
+ * to `null`.
+ *
+ * Every optional value is `T | null`, never `""` or an omitted key: "we do not have a
+ * music style" and "the music style is the empty string" must not be the same wire value,
+ * because one renders no chip and the other renders an empty one.
+ *
+ * The BOUNDS ARE ENFORCEMENT, not documentation. This snapshot is built from a manifest
+ * file in a user's own repository — arbitrary, user-authored text on its way into a jsonb
+ * column read by an anonymous public page. `scenes` is capped at 64 (the builder must
+ * TRUNCATE, not fail), the labels at 120 characters (the builder must truncate a long
+ * narrator `description` to fit — the design draws a chip, not a paragraph) and
+ * `scriptureText` at 20 000 (about the longest single-chapter passage, with room to
+ * spare). A snapshot that cannot satisfy this schema is dropped to `null` rather than
+ * stored, so an oversized input costs a missing section, never a failed publish.
+ */
+export const GalleryMakingOfSchema = z.object({
+  version: z.literal(1),
+  capturedAt: z.iso.datetime({ offset: true }),
+  scriptureText: jsonbSafeText(20_000).nullable(),
+  narratorVoiceLabel: jsonbSafeText(120).nullable(),
+  musicStyle: jsonbSafeText(120).nullable(),
+  captionsOn: z.boolean(),
+  scenes: z.array(GalleryMakingOfSceneSchema).max(64),
+});
+export type GalleryMakingOf = z.infer<typeof GalleryMakingOfSchema>;
+
+/** `GET /v1/gallery/:id` — the WATCH PAGE's contract, a strict widening of the card DTO.
+ *
+ *  Two fields more than a card, and both are per-item costs the grid must not pay:
+ *  `makingOf` is a jsonb blob nobody needs 24 of, and `publicVideoCount` is a `COUNT(*)`
+ *  — 24 of those per listing page, for a number the cards never render.
+ *
+ *  `makingOf` is REQUIRED-BUT-NULLABLE rather than optional, so a mapper cannot forget
+ *  it: omitting the key must be a validation failure, not a silently missing section. */
+export const GalleryItemDetailDtoSchema = GalleryItemDtoSchema.extend({
+  makingOf: GalleryMakingOfSchema.nullable(),
+  owner: GalleryOwnerSchema.extend({
+    /** How many PUBLIC gallery items this owner has. `unlisted` items are excluded — the
+     *  count sits on a public page beside a creator's name, so counting items a visitor
+     *  cannot reach would overstate them to everyone including their owner. */
+    publicVideoCount: z.number().int().min(0),
+  }),
+});
+export type GalleryItemDetailDto = z.infer<typeof GalleryItemDetailDtoSchema>;
+
+/** `GET /v1/gallery/:id` response. A `{ item }` envelope like every sibling — never a
+ *  bare item — so the response can grow a peer key without a wire break. */
+export const GalleryItemDetailResponseSchema = z.object({
+  item: GalleryItemDetailDtoSchema,
+});
+export type GalleryItemDetailResponse = z.infer<
+  typeof GalleryItemDetailResponseSchema
+>;
 
 /** `GET /v1/gallery` response. Keyed envelope, never a bare array.
  *

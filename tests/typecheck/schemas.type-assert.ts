@@ -9,8 +9,11 @@
 import type {
   CompositionSpec,
   CreateRenderRequest,
+  GalleryItemDetailDto,
+  GalleryItemDetailResponse,
   GalleryItemDto,
   GalleryListResponse,
+  GalleryMakingOf,
   GallerySort,
   GeneratedStoryboard,
   ManifestScene,
@@ -203,6 +206,53 @@ export const galleryList: GalleryListResponse = {
 // The listing is a keyed envelope, never a bare array.
 // @ts-expect-error a bare array is not a GalleryListResponse
 export const badGalleryList: GalleryListResponse = [galleryItem];
+
+// Turn 16a — the watch page's detail DTO is a STRICT WIDENING of the card DTO, and the
+// type lane is where that claim is cheapest to hold. A card literal is not a detail
+// literal, and a detail literal IS assignable to the card type.
+export const galleryMakingOf: GalleryMakingOf = {
+  version: 1,
+  capturedAt: "2026-07-26T18:30:00.000Z",
+  scriptureText: "In the beginning God created the heaven and the earth.",
+  narratorVoiceLabel: "JAMES EARL JONES-STYLE",
+  musicStyle: null,
+  captionsOn: true,
+  scenes: [{ index: 1, name: "THE VOID", durationSeconds: 8 }],
+};
+
+// @ts-expect-error `version` is the literal 1 — a future shape must be REJECTED, not
+// half-read by a reader that only knows v1.
+export const badGalleryMakingOf: GalleryMakingOf = { ...galleryMakingOf, version: 2 };
+
+export const galleryItemDetail: GalleryItemDetailDto = {
+  ...galleryItem,
+  makingOf: galleryMakingOf,
+  owner: { ...galleryItem.owner, publicVideoCount: 7 },
+};
+
+// Every pre-existing row, and every best-effort capture that failed.
+export const galleryItemDetailNoSnapshot: GalleryItemDetailDto = {
+  ...galleryItemDetail,
+  makingOf: null,
+};
+
+// The widening direction: a detail item is usable wherever a card is.
+export const detailIsACard: GalleryItemDto = galleryItemDetail;
+
+// ...but not the reverse — the mapper must supply both new fields.
+// @ts-expect-error a card DTO lacks makingOf and owner.publicVideoCount
+export const cardIsNotADetail: GalleryItemDetailDto = galleryItem;
+
+const { makingOf: _dropMakingOf, ...detailNoMakingOf } = galleryItemDetail;
+// @ts-expect-error makingOf is nullable but NOT optional — a mapper must decide, not omit
+export const galleryItemDetailMissingKey: GalleryItemDetailDto = detailNoMakingOf;
+
+export const galleryDetailResponse: GalleryItemDetailResponse = {
+  item: galleryItemDetail,
+};
+
+// @ts-expect-error the detail read is a `{ item }` envelope, never a bare item
+export const badGalleryDetailResponse: GalleryItemDetailResponse = galleryItemDetail;
 
 export const publishGallery: PublishGalleryItemRequest = {
   title: "In the beginning",

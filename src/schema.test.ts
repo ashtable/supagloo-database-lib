@@ -285,7 +285,7 @@ describe("Task #5 schema — model columns (ScalarFieldEnum introspection)", () 
     expect(fields).toContain("providerJobId");
   });
 
-  it("GalleryItem has exactly the specified columns (incl. scriptureBook, upvoteCount)", () => {
+  it("GalleryItem has exactly the specified columns (incl. scriptureBook, upvoteCount, makingOf)", () => {
     const fields = scalarFields(Prisma.GalleryItemScalarFieldEnum);
     expect(fields).toEqual(
       [
@@ -305,10 +305,13 @@ describe("Task #5 schema — model columns (ScalarFieldEnum introspection)", () 
         "publishedAt",
         "upvoteCount",
         "viewCount",
+        // Turn 16a — the publish-time manifest snapshot the watch page renders.
+        "makingOf",
       ].sort(),
     );
     expect(fields).toContain("scriptureBook");
     expect(fields).toContain("upvoteCount");
+    expect(fields).toContain("makingOf");
   });
 
   it("GalleryUpvote has exactly the specified columns", () => {
@@ -528,14 +531,93 @@ describe("Task #5 schema — schema-text introspection", () => {
     // The column-set assertions above are the primary guard; this pins the COUNT so
     // an accidental column slipped in alongside the index migration fails loudly here
     // too, with a message that says what happened.
+    //
+    // The count moved 16 -> 17 on 2026-07-26 when Turn 16a added `makingOf`. Task #39's
+    // own claim is unchanged and still true — IT adds indexes, not columns; the number
+    // is simply the table's current width, and it is pinned so the next accidental
+    // column still fails here.
     expect(
       scalarFields(Prisma.GalleryItemScalarFieldEnum).length,
-      "GalleryItem is a 16-column table; task #39 adds indexes, not columns",
-    ).toBe(16);
+      "GalleryItem is a 17-column table (16 from #39 + Turn 16a's makingOf); an index migration must not widen it",
+    ).toBe(17);
     expect(
       scalarFields(Prisma.GalleryUpvoteScalarFieldEnum).length,
       "GalleryUpvote is a 4-column table; task #40 adds no column",
     ).toBe(4);
+  });
+
+  // -------------------------------------------------------------------------
+  // Turn 16a — GalleryItem.makingOf (the publish-time manifest snapshot)
+  // -------------------------------------------------------------------------
+
+  it("the GalleryItem model carries a NULLABLE makingOf Json column", () => {
+    // NULLABLE is the load-bearing half. Every gallery item published before this
+    // column existed has no snapshot, and the publish path writes the snapshot
+    // BEST-EFFORT (a failed manifest read still returns 201). A NOT NULL column — or one
+    // with a default — would either break the backfill or invent an empty snapshot that
+    // the watch page would render as a real, empty "HOW IT WAS MADE" section.
+    const block = modelBlock("GalleryItem");
+    expect(block, "model GalleryItem should exist").toBeDefined();
+    expect(block as string).toMatch(/\bmakingOf\s+Json\?/);
+    // No default: `Json? @default(...)` would make "never captured" indistinguishable
+    // from "captured and empty".
+    expect(block as string).not.toMatch(/\bmakingOf\s+Json\?[^\n]*@default/);
+  });
+
+  it("does NOT index makingOf (nothing queries it — it is read by primary key only)", () => {
+    // Read only via `GET /v1/gallery/:id`, which already has the pkey. A jsonb index
+    // would cost every publish a write for no read.
+    expect(modelBlock("GalleryItem") as string).not.toMatch(/@@index\(\[makingOf\]\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Turn 16a — the MIGRATION, not just the datamodel
+// ---------------------------------------------------------------------------
+// Same rule as task #39's block above: `schema.prisma` generates the client, the
+// migration is what the DATABASE gets, and only the migration ships. SQL comments are
+// stripped so a commented-out statement cannot satisfy a regex.
+describe("Turn 16a migration — gallery_making_of SQL", () => {
+  const MIGRATION_DIR = "20260727002708_gallery_making_of";
+
+  function stripSqlComments(text: string): string {
+    return text
+      .split("\n")
+      .map((line) => {
+        const at = line.indexOf("--");
+        return at === -1 ? line : line.slice(0, at);
+      })
+      .join("\n");
+  }
+
+  const sql = stripSqlComments(
+    readFileSync(
+      join(REPO_ROOT, "prisma", "migrations", MIGRATION_DIR, "migration.sql"),
+      "utf8",
+    ),
+  );
+
+  it("adds makingOf as a NULLABLE JSONB column", () => {
+    expect(sql).toMatch(
+      /ALTER TABLE "GalleryItem" ADD COLUMN\s+"makingOf" JSONB/,
+    );
+    // No NOT NULL and no DEFAULT: an ALTER that added either would rewrite the table
+    // and would give every pre-existing row a snapshot it never had.
+    expect(sql).not.toMatch(/NOT NULL/i);
+    expect(sql).not.toMatch(/DEFAULT/i);
+  });
+
+  it("adds NOTHING else — one ALTER, no DROP, no data change, no index", () => {
+    expect(sql.match(/ALTER TABLE/gi) ?? []).toHaveLength(1);
+    for (const forbidden of [
+      /DROP /i,
+      /CREATE TABLE/i,
+      /CREATE INDEX/i,
+      /UPDATE /i,
+      /DELETE /i,
+    ]) {
+      expect(sql, `${String(forbidden)} must not appear`).not.toMatch(forbidden);
+    }
   });
 });
 

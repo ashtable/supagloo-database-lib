@@ -311,6 +311,17 @@ model GalleryItem {
   publishedAt        DateTime          @default(now())
   upvoteCount        Int               @default(0) // denormalized; updated txn-ally with GalleryUpvote
   viewCount          Int               @default(0)
+  // Turn 16a — the watch page's "HOW IT WAS MADE" snapshot, validated by
+  // database-lib's `GalleryMakingOfSchema` (`src/schemas.ts`). Captured ONCE at publish
+  // time from the project's repo manifest, by the authenticated owner, so the PUBLIC
+  // read never touches GitHub and never holds an installation token.
+  //
+  // NULLABLE with NO default, and both halves are load-bearing: the capture is BEST
+  // EFFORT (a failed manifest read still returns 201) and every item published before
+  // this column existed has no snapshot — so `null` is a permanent, first-class case
+  // meaning "we do not have this", which a `{}` default would erase into "captured, and
+  // empty". Deliberately NOT indexed: it is read by primary key only.
+  makingOf           Json?
 
   renderJob RenderJob       @relation(fields: [renderJobId], references: [id], onDelete: Cascade)
   project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)

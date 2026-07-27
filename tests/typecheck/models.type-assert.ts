@@ -188,6 +188,10 @@ export const galleryItem: GalleryItem = {
   publishedAt: new Date(),
   upvoteCount: 0,
   viewCount: 0,
+  // Turn 16a: `Json?` makes the KEY required and the VALUE nullable, so a row literal
+  // must state `null` explicitly — which is the point: "no snapshot" is a decision the
+  // writer makes, never a field it can forget.
+  makingOf: null,
 };
 
 export const galleryUpvote: GalleryUpvote = {
