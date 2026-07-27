@@ -693,7 +693,8 @@ describe("Tasks #42/#49 migration — session_expiry_and_project_repo_indexes SQ
     // All four properties matter and each has a distinct failure mode:
     //   UNIQUE      — an INDEX would make the migration a no-op for the race.
     //   column order— (ownerId, repoOwner, repoName) also serves the per-owner lookup.
-    //   the name    — it is what P2002.meta.target carries into the API's 409 mapping.
+    //   the name    — `uniqueViolationIndexName` parses it out of the P2002 message for
+    //                  the API's 409 mapping (P2002 carries no `meta.target` here).
     //   the WHERE   — without it, a soft-deleted project blocks re-creating that repo.
     expect(sql()).toMatch(
       /CREATE UNIQUE INDEX "Project_ownerId_repoOwner_repoName_active_key"\s+ON "Project"\("ownerId", "repoOwner", "repoName"\)\s+WHERE "deletedAt" IS NULL/,

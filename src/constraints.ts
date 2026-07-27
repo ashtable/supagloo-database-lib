@@ -3,13 +3,18 @@
  * another service has to recognize by name at runtime.
  *
  * Most of this schema's constraints never need a constant: Prisma generates them from
- * the DSL, and a violation arrives as `P2002` with `meta.target` set to the FIELD LIST,
- * which callers already know. The exception is an index Prisma did NOT generate. For
- * those, Prisma has no field list to report and puts the raw INDEX NAME in
- * `meta.target` instead — so the name itself becomes the contract between the migration
- * that creates it and the service that maps the violation to an HTTP status.
+ * the DSL, so a violation is recognizable from the model and the fields the caller just
+ * wrote. The exception is an index Prisma did NOT generate: nothing identifies it but its
+ * raw INDEX NAME, so the name itself becomes the contract between the migration that
+ * creates it and the service that maps the violation to an HTTP status.
  *
- * That is exactly one index today (task #49). Keep this file to that rule: a constant
+ * How a service reads that name is NOT `meta.target`: that field does not exist on a
+ * `P2002` at all on Prisma 7.8.0 + `@prisma/adapter-pg` (this package's only client
+ * factory). The name is reachable only through the driver adapter's passthrough, which
+ * `uniqueViolationIndexName` below parses — so match with
+ * `isUniqueViolationOn(err, PROJECT_ACTIVE_REPO_UNIQUE_INDEX)` and nothing else.
+ *
+ * Exactly one index meets that bar today (task #49). Keep this file to that rule: a constant
  * here means "some other repo matches on this string"; a constraint only this package's
  * own tests care about does not belong here.
  */
@@ -28,13 +33,15 @@
  * concurrent requests for the same repo both passed the check and produced two `Project`
  * rows and two scaffold workflows for one GitHub repo.
  *
- * Consume it in the API's create AND import paths: catch `P2002`, compare `meta.target`
- * against this constant, and answer the loser with the existing 409 `project_exists`
- * rather than letting a raw Prisma error become a 500. Two properties of the surrounding
- * code make the name the only workable key:
+ * Consume it in the API's create AND import paths: catch `P2002`, test it with
+ * `isUniqueViolationOn(err, PROJECT_ACTIVE_REPO_UNIQUE_INDEX)`, and answer the loser with
+ * the existing 409 `project_exists` rather than letting a raw Prisma error become a 500.
+ * Two properties of the surrounding code make that the only workable shape:
  *
- * - `meta.target` is this string, not `["ownerId","repoOwner","repoName"]` — a mapper
- *   switching on a field list silently never matches.
+ * - `meta.target` does not exist on Prisma 7.8.0 + `@prisma/adapter-pg` — it is
+ *   `undefined` for this raw index and for DSL-generated `@@unique`s alike, so a mapper
+ *   keyed to it never matches and ships the 500 this index exists to prevent. The
+ *   supported reader is `uniqueViolationIndexName` below; read its docstring first.
  * - the catch must wrap the whole `$transaction` call, never sit inside the callback: a
  *   `P2002` raised inside a Prisma interactive transaction aborts it (25P02) because
  *   Prisma issues no SAVEPOINT.
@@ -72,10 +79,11 @@ export const PROJECT_ACTIVE_REPO_UNIQUE_INDEX =
  * different copy of the Prisma error class than the one that threw
  * (`auth-service.ts` / `gallery-service.ts` document the same rule).
  *
- * The legacy `meta.target` shapes are still honoured so this keeps working if a future
- * Prisma restores them: a **string** target is an index name; an **array** target is a
- * field list and deliberately yields `null`, because a field list is not an index name
- * and matching one against an index name would only ever succeed by coincidence.
+ * The legacy `meta.target` shapes are still honoured even though they do not exist on
+ * this stack, so the reader keeps working if a future Prisma restores them: a **string**
+ * target is an index name; an **array** target is a field list and deliberately yields
+ * `null`, because a field list is not an index name and matching one against an index
+ * name would only ever succeed by coincidence.
  */
 export function uniqueViolationIndexName(err: unknown): string | null {
   if (typeof err !== "object" || err === null) return null;
@@ -94,6 +102,9 @@ export function uniqueViolationIndexName(err: unknown): string | null {
     if (named?.[1]) return named[1];
   }
 
+  // Legacy fallback only — a string target is an index name, an array target is a field
+  // list and yields `null` (see the docstring). `meta.target` does not exist on Prisma
+  // 7.8.0 + `@prisma/adapter-pg`; this branch is forward-compatibility, nothing more.
   const target = e.meta?.target;
   return typeof target === "string" ? target : null;
 }

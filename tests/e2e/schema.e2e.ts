@@ -297,7 +297,9 @@ describe("e2e: Task #49 Project active-repo partial unique index in Postgres", (
   const INDEX = "Project_ownerId_repoOwner_repoName_active_key";
 
   it("exposes the index name as a shared constant matching the deployed index", () => {
-    // The API maps P2002 → 409 by matching `meta.target` against this constant.
+    // The API maps P2002 → 409 with `isUniqueViolationOn(err, <this constant>)`;
+    // `meta.target` does not exist on Prisma 7.8.0 + @prisma/adapter-pg, which E-PU2
+    // below pins against a REAL error.
     expect(DbLib.PROJECT_ACTIVE_REPO_UNIQUE_INDEX).toBe(INDEX);
   });
 
