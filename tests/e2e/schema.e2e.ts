@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createPrismaClient } from "../../src/index";
+import { GalleryMakingOfSchema, createPrismaClient } from "../../src/index";
 
 // End-to-end proof of the Prisma schema against the real Compose Postgres:
 // applies the committed migrations with `prisma migrate deploy`, then exercises
@@ -244,6 +244,108 @@ describe("e2e: Task #39 gallery sort indexes in Postgres", () => {
   // dev DB, so the diff is permanently non-empty ("[-] Removed tables - noop_proof") and
   // the assertion would fail for a reason that has nothing to do with the schema. The
   // no-drift proof is run against a PRISTINE scratch database instead (plan §7(a) 3).
+});
+
+// Same argument as the block above, for a COLUMN instead of an index: every other
+// assertion about `makingOf` in this repo reads text (schema.prisma, migration.sql) or a
+// generated type. This asks the running database.
+describe("e2e: Turn 16a GalleryItem.makingOf in Postgres", () => {
+  it("created makingOf as a NULLABLE jsonb column with no default", async () => {
+    const rows = await client.$queryRawUnsafe<
+      Array<{ data_type: string; is_nullable: string; column_default: string | null }>
+    >(
+      `SELECT data_type, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'GalleryItem'
+          AND column_name = 'makingOf'`,
+    );
+    expect(
+      rows,
+      "makingOf missing from the DATABASE (did migrate deploy run?)",
+    ).toHaveLength(1);
+    expect(rows[0]?.data_type).toBe("jsonb");
+    // NOT NULL would break every pre-existing row; a default would turn "never
+    // captured" into "captured, and empty".
+    expect(rows[0]?.is_nullable).toBe("YES");
+    expect(rows[0]?.column_default).toBeNull();
+  });
+
+  it("a row written WITHOUT makingOf reads back null (the pre-existing-item case)", async () => {
+    const u = await makeUser("mo-null");
+    const p = await makeProject(u.id, "making-of-null");
+    const v = await makeVersion(p.id, "0.0.0");
+    const rj = await makeRenderJob(p.id, v.id, u.id);
+    const gi = await makeGalleryItem(rj.id, p.id, u.id);
+    // `makeGalleryItem` does not set the column at all — exactly like every publish that
+    // happened before this column existed, and every best-effort capture that failed.
+    expect(gi.makingOf).toBeNull();
+    const read = await client.galleryItem.findUniqueOrThrow({ where: { id: gi.id } });
+    expect(read.makingOf).toBeNull();
+  });
+
+  it("round-trips a GalleryMakingOfSchema-valid snapshot through the jsonb column", async () => {
+    const snapshot = {
+      version: 1 as const,
+      capturedAt: "2026-07-26T18:30:00.000Z",
+      scriptureText: "In the beginning God created the heaven and the earth.",
+      narratorVoiceLabel: "JAMES EARL JONES-STYLE",
+      musicStyle: "Ambient cinematic swell",
+      captionsOn: true,
+      scenes: [
+        { index: 1, name: "THE VOID", durationSeconds: 8 },
+        { index: 2, name: "LET THERE BE LIGHT", durationSeconds: 7.5 },
+      ],
+    };
+    // The schema is the column's value gate; a snapshot the DB cannot carry must fail
+    // validation BEFORE the insert, so the two are proven together here.
+    expect(GalleryMakingOfSchema.parse(snapshot)).toEqual(snapshot);
+
+    const u = await makeUser("mo-round");
+    const p = await makeProject(u.id, "making-of-round");
+    const v = await makeVersion(p.id, "0.0.0");
+    const rj = await makeRenderJob(p.id, v.id, u.id);
+    const gi = await makeGalleryItem(rj.id, p.id, u.id);
+    await client.galleryItem.update({
+      where: { id: gi.id },
+      data: { makingOf: snapshot },
+    });
+
+    const read = await client.galleryItem.findUniqueOrThrow({ where: { id: gi.id } });
+    // Byte-for-byte through jsonb, INCLUDING the fractional duration and the scene ORDER
+    // — jsonb does not preserve object key order, but it does preserve ARRAY order, and
+    // the scene tiles render in that order.
+    expect(GalleryMakingOfSchema.parse(read.makingOf)).toEqual(snapshot);
+    expect(
+      (read.makingOf as { scenes: Array<{ name: string }> }).scenes.map((s) => s.name),
+    ).toEqual(["THE VOID", "LET THERE BE LIGHT"]);
+  });
+
+  it("REFUSES a NUL byte in the snapshot — the schema catches what Postgres would reject", async () => {
+    // MEASURED: `SELECT ('{"a":"x' || E'\\u0000' || 'y"}')::jsonb` is
+    // `ERROR: unsupported Unicode escape sequence`. So this is not a style rule — an
+    // ungated NUL is a failed publish INSERT. Proven in both directions: the schema
+    // refuses it, and the database refuses it too.
+    const withNul = {
+      version: 1 as const,
+      capturedAt: "2026-07-26T18:30:00.000Z",
+      scriptureText: `In the beginning${String.fromCharCode(0)} God created`,
+      narratorVoiceLabel: null,
+      musicStyle: null,
+      captionsOn: false,
+      scenes: [],
+    };
+    expect(GalleryMakingOfSchema.safeParse(withNul).success).toBe(false);
+
+    const u = await makeUser("mo-nul");
+    const p = await makeProject(u.id, "making-of-nul");
+    const v = await makeVersion(p.id, "0.0.0");
+    const rj = await makeRenderJob(p.id, v.id, u.id);
+    const gi = await makeGalleryItem(rj.id, p.id, u.id);
+    await expect(
+      client.galleryItem.update({ where: { id: gi.id }, data: { makingOf: withNul } }),
+    ).rejects.toThrow();
+  });
 });
 
 describe("e2e: Task #4 schema against Compose Postgres", () => {

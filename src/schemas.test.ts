@@ -994,6 +994,12 @@ describe("Task #7 schemas — barrel exports", () => {
     "GalleryListQuerySchema",
     "GalleryIdParamSchema",
     "GalleryDeleteResponseSchema",
+    // Turn 16a — the watch page's detail contract + the publish-time snapshot
+    "GalleryOwnerSchema",
+    "GalleryMakingOfSceneSchema",
+    "GalleryMakingOfSchema",
+    "GalleryItemDetailDtoSchema",
+    "GalleryItemDetailResponseSchema",
   ] as const;
 
   it("re-exports every schema from the package entry as a usable Zod schema", () => {
