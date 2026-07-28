@@ -45,6 +45,32 @@ export function buildAssetKey(projectId: string, assetId: string): string {
   return `projects/${projectId}/assets/${assetId}`;
 }
 
+/**
+ * `projects/{projectId}/assets/{generationId}-scene-{sceneId}` — the per-scene
+ * narration clip of a single narration generation.
+ *
+ * Narration synthesis produces N assets for ONE `AiGeneration` row (one clip per scene,
+ * so each can be mounted inside its own `<Sequence>`). The obvious layout,
+ * `projects/{p}/assets/{genId}/scene-{sceneId}`, is a TRAP: {@link parseS3Key} matches a
+ * project asset on `segments.length === 4` exactly, and the API's presign-download route
+ * maps a `null` parse to a 404 — so every per-scene narration preview in the studio would
+ * fail as "not found", indistinguishable from "not yours". Folding the scene into the
+ * assetId SEGMENT keeps the canonical four-segment layout, so presign and ownership
+ * resolution work unchanged with no API change at all.
+ *
+ * `assertSegment` runs on the composed segment, so a `sceneId` carrying a `/` throws
+ * loudly instead of silently smuggling extra path segments into the layout.
+ */
+export function buildSceneNarrationAssetKey(
+  projectId: string,
+  generationId: string,
+  sceneId: string,
+): string {
+  assertSegment(generationId, "generationId");
+  assertSegment(sceneId, "sceneId");
+  return buildAssetKey(projectId, `${generationId}-scene-${sceneId}`);
+}
+
 /** `renders/{renderJobId}/output.mp4` */
 export function buildRenderOutputKey(renderJobId: string): string {
   assertSegment(renderJobId, "renderJobId");
