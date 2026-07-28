@@ -3,6 +3,7 @@ import {
   buildAssetKey,
   buildRenderOutputKey,
   buildRenderThumbnailKey,
+  buildSceneNarrationAssetKey,
   parseS3Key,
 } from "./s3-keys";
 
@@ -81,4 +82,37 @@ describe("parseS3Key — rejects anything unrecognized (returns null)", () => {
       expect(parseS3Key(key)).toBeNull();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Per-scene narration assets (render-bug work): N assets for ONE AiGeneration row.
+// ---------------------------------------------------------------------------
+
+describe("buildSceneNarrationAssetKey", () => {
+  it("U-K1: stays a FOUR-segment project-asset key so parseS3Key still recognizes it", () => {
+    // The trap this test exists to close: `parseS3Key` matches project assets on
+    // `segments.length === 4` EXACTLY, and the API's presign-download route maps a
+    // null parse to a 404. A nested `projects/p/assets/gen/scene-s1` key would be five
+    // segments, so every per-scene narration preview in the studio would 404 — with the
+    // failure surfacing as "not found", indistinguishable from "not yours".
+    const key = buildSceneNarrationAssetKey("proj-1", "gen-9", "s2");
+    expect(key.split("/")).toHaveLength(4);
+    expect(parseS3Key(key)).toEqual({
+      kind: "project-asset",
+      projectId: "proj-1",
+      assetId: "gen-9-scene-s2",
+    });
+  });
+
+  it("U-K2: is distinct per scene and stable for the same scene", () => {
+    const a = buildSceneNarrationAssetKey("p", "g", "s1");
+    const b = buildSceneNarrationAssetKey("p", "g", "s2");
+    expect(a).not.toBe(b);
+    expect(buildSceneNarrationAssetKey("p", "g", "s1")).toBe(a);
+  });
+
+  it("U-K3: throws rather than emit a corrupt key when a sceneId smuggles a slash", () => {
+    expect(() => buildSceneNarrationAssetKey("p", "g", "s1/../../evil")).toThrow();
+    expect(() => buildSceneNarrationAssetKey("p", "g", "")).toThrow();
+  });
 });

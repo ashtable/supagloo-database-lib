@@ -319,6 +319,140 @@ describe("Task #35 schema — VoiceDescriptorSchema.assetKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// B3. Render-bug fields: per-scene narration, the still/clip discriminator, and the
+//     MEASURED music length (plan D5). Every one is OPTIONAL — genesis-1's committed
+//     manifest is already `manifestVersion: 1` and must keep parsing untouched.
+// ---------------------------------------------------------------------------
+
+describe("Render-bug schemas — per-scene narration + visualAssetKind + measured music length", () => {
+  it("U-RB1: a v1 scene WITHOUT any of the new fields still parses (backward compatibility)", () => {
+    const res = S.ProjectManifestSchema.safeParse(validManifest);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    // Absence must stay absence — a materialized `undefined` key would break the nextjs
+    // adapter's serialize∘hydrate deep-equality contract (U-A5).
+    if (res.success) {
+      expect("narrationAssetKey" in res.data.scenes[0]).toBe(false);
+      expect("visualAssetKind" in res.data.scenes[0]).toBe(false);
+    }
+  });
+
+  it("U-RB2: a scene accepts narrationAssetKey + narrationDurationSeconds and round-trips them", () => {
+    const withNarration = {
+      ...validManifest,
+      scenes: [
+        {
+          ...validManifest.scenes[0],
+          narrationAssetKey: "projects/x/assets/gen-1/scene-s1.mp3",
+          narrationDurationSeconds: 3.528,
+        },
+      ],
+    };
+    const res = S.ProjectManifestSchema.safeParse(withNarration);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    if (res.success) expect(res.data).toEqual(withNarration);
+  });
+
+  it("U-RB3: narrationAssetKey accepts null but rejects the empty string", () => {
+    const nulled = {
+      ...validManifest,
+      scenes: [{ ...validManifest.scenes[0], narrationAssetKey: null }],
+    };
+    expect(S.ProjectManifestSchema.safeParse(nulled).success).toBe(true);
+    const empty = {
+      ...validManifest,
+      scenes: [{ ...validManifest.scenes[0], narrationAssetKey: "" }],
+    };
+    expect(S.ProjectManifestSchema.safeParse(empty).success).toBe(false);
+  });
+
+  it("U-RB4: narrationDurationSeconds must be positive", () => {
+    for (const bad of [0, -1]) {
+      const m = {
+        ...validManifest,
+        scenes: [{ ...validManifest.scenes[0], narrationDurationSeconds: bad }],
+      };
+      expect(S.ProjectManifestSchema.safeParse(m).success, `duration ${bad}`).toBe(
+        false,
+      );
+    }
+  });
+
+  it("U-RB5: visualAssetKind accepts image/video and rejects anything else", () => {
+    // The discriminator that lets Ken Burns apply to STILLS only — and that closes the
+    // latent bug where a video-kind asset was rendered through <Img>.
+    for (const kind of ["image", "video"]) {
+      const m = {
+        ...validManifest,
+        scenes: [{ ...validManifest.scenes[0], visualAssetKind: kind }],
+      };
+      expect(S.ProjectManifestSchema.safeParse(m).success, kind).toBe(true);
+    }
+    const bogus = {
+      ...validManifest,
+      scenes: [{ ...validManifest.scenes[0], visualAssetKind: "gif" }],
+    };
+    expect(S.ProjectManifestSchema.safeParse(bogus).success).toBe(false);
+  });
+
+  it("U-RB6: MusicBedSchema carries the MEASURED durationSeconds, positive-only, optional", () => {
+    expect(
+      S.MusicBedSchema.safeParse({ style: "ambient pads" }).success,
+      "still optional",
+    ).toBe(true);
+    expect(
+      S.MusicBedSchema.safeParse({
+        style: "ambient pads",
+        assetKey: "projects/x/music.mp3",
+        durationSeconds: 29.074,
+      }).success,
+    ).toBe(true);
+    expect(
+      S.MusicBedSchema.safeParse({ style: "ambient pads", durationSeconds: 0 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("U-RB7: NarrationResultSchema round-trips the per-scene map an AiGeneration keeps in resultJson", () => {
+    // Plan D4: one generation row keeps ONE resultAssetKey; the N per-scene assets are
+    // carried in resultJson, which is what makes scene-synced narration expressible
+    // without N generation rows.
+    const result = {
+      scenes: [
+        {
+          sceneId: "s1",
+          assetKey: "projects/p/assets/g1/scene-s1.mp3",
+          durationSeconds: 3.528,
+        },
+        {
+          sceneId: "s2",
+          assetKey: "projects/p/assets/g1/scene-s2.mp3",
+          durationSeconds: 5.04,
+        },
+      ],
+    };
+    const res = S.NarrationResultSchema.safeParse(result);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    if (res.success) expect(res.data).toEqual(result);
+    // An entry whose duration could not be measured is still ACCEPTED: the clip can still
+    // be mounted inside its own scene's <Sequence> (most of the fix), and only the
+    // stretch-to-fit is lost. Recording a fabricated length instead would silently mis-time
+    // the scene, which is worse than an absent one. It mirrors
+    // `ManifestScene.narrationDurationSeconds`, which is optional for the same reason.
+    expect(
+      S.NarrationResultSchema.safeParse({
+        scenes: [{ sceneId: "s1", assetKey: "k" }],
+      }).success,
+    ).toBe(true);
+    // A duration that IS present must still be a real one.
+    expect(
+      S.NarrationResultSchema.safeParse({
+        scenes: [{ sceneId: "s1", assetKey: "k", durationSeconds: 0 }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // C. GeneratedStoryboardSchema
 // ---------------------------------------------------------------------------
 

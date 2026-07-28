@@ -133,10 +133,21 @@ export const VoiceDescriptorSchema = z.object({
 export type VoiceDescriptor = z.infer<typeof VoiceDescriptorSchema>;
 
 /** The manifest's music bed: a style descriptor + the cached synthesized audio
- *  asset key (absent/null until generated). */
+ *  asset key (absent/null until generated).
+ *
+ *  `durationSeconds` is the MEASURED length of the synthesized track, NOT a
+ *  requested one. Verified live against OpenRouter: neither Lyria model exposes a
+ *  duration parameter (`supported_parameters` is
+ *  `["max_tokens","response_format","seed","temperature","top_p"]`), so clip length
+ *  is a property of the chosen model — clip-preview yields ~30 s, pro yields a
+ *  full-length song. The composition therefore cannot ASK for a bed that spans the
+ *  video; it has to FIT the bed it was given, which means looping it, which means
+ *  knowing how long it is (`<Loop durationInFrames={round(durationSeconds * fps)}>`).
+ *  Optional, so every existing `manifestVersion: 1` manifest keeps parsing. */
 export const MusicBedSchema = z.object({
   style: z.string().min(1),
   assetKey: z.string().min(1).nullable().optional(),
+  durationSeconds: z.number().positive().optional(),
 });
 export type MusicBed = z.infer<typeof MusicBedSchema>;
 
@@ -152,10 +163,35 @@ export type EndCard = z.infer<typeof EndCardSchema>;
 // ProjectManifestSchema — the supagloo.project.json file format
 // ---------------------------------------------------------------------------
 
+/** The kind of media behind `visualAssetKey`. Both the image and the video
+ *  generation workflows write the SAME extensionless key shape
+ *  (`projects/{projectId}/assets/{genId}`, see `s3-keys.ts`) and the S3 content-type
+ *  is discarded on download, so the manifest is the ONLY place that can record what
+ *  the bytes are. Two things depend on knowing:
+ *    - a still gets the Ken Burns pan/zoom; a clip must not (it moves already);
+ *    - a clip must render through `<OffthreadVideo>`, not `<Img>`.
+ *  Absent ⇒ `"image"`, which keeps every existing v1 manifest correct: before this
+ *  field existed, EVERY scene was rendered through `<Img>` regardless. */
+export const VisualAssetKindSchema = z.enum(["image", "video"]);
+export type VisualAssetKind = z.infer<typeof VisualAssetKindSchema>;
+
 /** One ordered scene in the persisted composition. Carries a stable `id`
  *  (AiGeneration.sceneId points at it), a concrete `durationSeconds`, a
  *  `captions` flag, and the S3 `visualAssetKey` of the generated image/clip
- *  (null/absent until generated). */
+ *  (null/absent until generated).
+ *
+ *  `narrationAssetKey`/`narrationDurationSeconds` are the per-scene half of the
+ *  narration track. Narration used to be ONE whole-project asset
+ *  (`narratorVoice.assetKey`) mounted at frame 0, outside every `<Sequence>` — there
+ *  was no sync mechanism of any kind, so scene 3's verse could be playing over scene
+ *  1's picture. Carrying the asset and its MEASURED length per scene is what lets the
+ *  generated composition mount each scene's audio inside that scene's own
+ *  `<Sequence>`, and what lets `effectiveSceneDurationSeconds` stop a verse being cut
+ *  off mid-sentence. `narratorVoice.assetKey` is retained as the whole-video fallback
+ *  for manifests written before this existed.
+ *
+ *  All three fields are OPTIONAL: `manifestVersion` stays `z.literal(1)`, and
+ *  already-committed manifests must keep parsing unchanged. */
 export const ManifestSceneSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -166,6 +202,9 @@ export const ManifestSceneSchema = z.object({
   durationSeconds: z.number().positive(),
   captions: z.boolean(),
   visualAssetKey: z.string().min(1).nullable().optional(),
+  visualAssetKind: VisualAssetKindSchema.optional(),
+  narrationAssetKey: z.string().min(1).nullable().optional(),
+  narrationDurationSeconds: z.number().positive().optional(),
 });
 export type ManifestScene = z.infer<typeof ManifestSceneSchema>;
 
@@ -316,6 +355,40 @@ export const NarrationSpecSchema = z.object({
   scenes: z.array(NarrationSceneSchema).min(1),
 });
 export type NarrationSpec = z.infer<typeof NarrationSpecSchema>;
+
+/** One synthesized per-scene narration clip: which scene it belongs to, where its
+ *  bytes landed, and how long it actually turned out to be. */
+export const NarrationResultSceneSchema = z.object({
+  sceneId: z.string().min(1),
+  assetKey: z.string().min(1),
+  /** MEASURED from the returned audio bytes — the input to scene/narration length
+   *  reconciliation. OPTIONAL, mirroring `ManifestScene.narrationDurationSeconds`:
+   *  if a container ever comes back that we cannot measure honestly, the clip is
+   *  still worth recording (it can still be mounted inside its own scene's
+   *  `<Sequence>`, which is most of the fix) and only the stretch is lost. A
+   *  fabricated number here would silently mis-time every scene, which is strictly
+   *  worse than an absent one. */
+  durationSeconds: z.number().positive().optional(),
+});
+export type NarrationResultScene = z.infer<typeof NarrationResultSceneSchema>;
+
+/**
+ * The narration generation's OUTPUT map, carried in `AiGeneration.resultJson`.
+ *
+ * An `AiGeneration` row has exactly ONE `resultAssetKey`, and that invariant is not
+ * being changed — narration synthesis now produces one asset PER SCENE, and the extra
+ * keys live here. `resultAssetKey` still names a single object (the first scene's), so
+ * every existing consumer of the row keeps working; the studio reads this map to write
+ * per-scene `narrationAssetKey`/`narrationDurationSeconds` into the manifest.
+ *
+ * Rejected alternative: one `AiGeneration` row per scene. The studio's generation-slot
+ * model, the BFF, the API route and the render-progress UI all assume one row per user
+ * action, so N rows is a four-repo redesign that buys the user nothing over a map.
+ */
+export const NarrationResultSchema = z.object({
+  scenes: z.array(NarrationResultSceneSchema),
+});
+export type NarrationResult = z.infer<typeof NarrationResultSchema>;
 
 /** Input to music synthesis: a style label + the target duration in seconds. */
 export const MusicSpecSchema = z.object({
