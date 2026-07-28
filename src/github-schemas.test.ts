@@ -56,6 +56,65 @@ describe("Task #11 wire DTOs — install url + callback request", () => {
   });
 });
 
+describe("wire DTOs — linking an installation that already exists", () => {
+  it("GithubAuthorizeUrlQuerySchema requires both redirectUri and state", () => {
+    expect(
+      S.GithubAuthorizeUrlQuerySchema.safeParse({
+        redirectUri: "http://localhost:8000/api/connect/github/callback",
+        state: "nonce-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      S.GithubAuthorizeUrlQuerySchema.safeParse({ redirectUri: "x" }).success,
+    ).toBe(false);
+    expect(
+      S.GithubAuthorizeUrlQuerySchema.safeParse({ state: "nonce-1" }).success,
+    ).toBe(false);
+  });
+
+  /** `state` is the CSRF binding; an empty one is the same as having none. */
+  it("GithubAuthorizeUrlQuerySchema rejects empty strings", () => {
+    expect(
+      S.GithubAuthorizeUrlQuerySchema.safeParse({ redirectUri: "", state: "n" })
+        .success,
+    ).toBe(false);
+    expect(
+      S.GithubAuthorizeUrlQuerySchema.safeParse({ redirectUri: "u", state: "" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("GithubAuthorizeUrlResponseSchema requires a url", () => {
+    expect(
+      S.GithubAuthorizeUrlResponseSchema.safeParse({
+        url: "https://github.com/login/oauth/authorize?client_id=x",
+      }).success,
+    ).toBe(true);
+    expect(S.GithubAuthorizeUrlResponseSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("GithubLinkExistingRequestSchema requires a non-empty code", () => {
+    expect(
+      S.GithubLinkExistingRequestSchema.safeParse({ code: "abc" }).success,
+    ).toBe(true);
+    expect(S.GithubLinkExistingRequestSchema.safeParse({ code: "" }).success).toBe(
+      false,
+    );
+    expect(S.GithubLinkExistingRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  /** Unlike the install callback, this one carries NO installationId — the whole
+   *  point is that the server resolves it from the user's own installations. */
+  it("GithubLinkExistingRequestSchema does not carry an installationId", () => {
+    const parsed = S.GithubLinkExistingRequestSchema.safeParse({
+      code: "abc",
+      installationId: "999",
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && "installationId" in parsed.data).toBe(false);
+  });
+});
+
 describe("Task #11 wire DTOs — connection status + disconnect", () => {
   it("GithubConnectionStatusSchema parses a stored connection (ISO connectedAt)", () => {
     expect(S.GithubConnectionStatusSchema.safeParse(validConnection).success).toBe(
