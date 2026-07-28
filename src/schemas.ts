@@ -214,6 +214,74 @@ export type ManifestScene = z.infer<typeof ManifestSceneSchema>;
  * `scenes` MAY be empty (a freshly-scaffolded project); `narratorVoice` is required
  * (core, project-scoped); `music`/`endCard` are optional (may be unconfigured).
  */
+// ---------------------------------------------------------------------------
+// AiGenerationSettingsSchema — the genesis-1 Inspector's project-level AI config
+// ---------------------------------------------------------------------------
+
+/**
+ * The faith-alignment values Gloo's `tradition` request field actually honours.
+ *
+ * **All four were measured against the live host on 2026-07-28**, by the size of the
+ * system prompt Gloo injects (prompt "hi", `max_tokens: 1`, `temperature: 0`): omitted →
+ * 757 prompt tokens, `not_faith_specific` → 757, `catholic` → 11253, `evangelical` →
+ * 11289, `mainline` → 11275. The content differs substantively too, not just the size.
+ *
+ * **THERE IS NO `protestant` AND NO `orthodox`.** `evangelical` and `mainline` are the
+ * two Protestant-family options Gloo offers. This matters because the obvious guess is
+ * wrong in a way nothing will tell you about:
+ *
+ * **The enum is NOT enforced server-side.** `orthodox`, `protestant`, `reformed`,
+ * `pentecostal`, `buddhist`, `null` and a garbage sentinel ALL return **200** and
+ * silently collapse to the neutral 757-token baseline. There is no 422. So a wrong value
+ * is not an error anyone sees — it is a video that quietly is not faith-aligned. This
+ * schema is the only thing that catches it, which is why the value is an enum here and
+ * why nothing downstream may send free text.
+ *
+ * The user-facing word for this is **"faith-aligned"** — the design's own term (10a/10b
+ * describe Gloo as "faith-aligned models"). Never "denomination"; never "tradition",
+ * which is Gloo's wire name, not ours.
+ */
+export const FaithAlignmentSchema = z.enum([
+  "evangelical",
+  "catholic",
+  "mainline",
+  "not_faith_specific",
+]);
+export type FaithAlignment = z.infer<typeof FaithAlignmentSchema>;
+
+/** One kind's generation target. `model` is OPTIONAL on purpose: "use Gloo, with whatever
+ *  model the system currently defaults to" is a real (and the DEFAULT) user intent, and
+ *  the default is resolved server-side per deployment rather than frozen into a file
+ *  committed to the user's GitHub repo. Pinning a model is the override, not the norm. */
+export const AiModelChoiceSchema = z.object({
+  provider: AiProviderSchema,
+  model: z.string().min(1).optional(),
+});
+export type AiModelChoice = z.infer<typeof AiModelChoiceSchema>;
+
+/**
+ * Project-level AI generation settings (genesis-1 Inspector, decisions D-A/D-B).
+ *
+ * PROJECT-level, not per-scene, and deliberately so. A model choice is a configuration
+ * of the project, not content of a scene: a per-scene choice would make the user re-pick
+ * a model 5–10 times (the opposite of "know the cost of iterating"), and a per-scene
+ * `faithAlignment` would let scene 3 argue with scene 4. Going project-level → per-scene
+ * later is an additive optional field; the reverse is a manifest migration.
+ *
+ * Only the four kinds the Inspector offers a selector for appear here. The text kinds
+ * (`storyboard`/`script`) have no selector, so giving them a slot would imply a control
+ * that does not exist. Explicit keys (rather than a record) also make the canonical
+ * on-disk field order trivially fixed — `canonicalizeManifest` needs that.
+ */
+export const AiGenerationSettingsSchema = z.object({
+  faithAlignment: FaithAlignmentSchema.optional(),
+  image: AiModelChoiceSchema.optional(),
+  narration: AiModelChoiceSchema.optional(),
+  music: AiModelChoiceSchema.optional(),
+  video: AiModelChoiceSchema.optional(),
+});
+export type AiGenerationSettings = z.infer<typeof AiGenerationSettingsSchema>;
+
 export const ProjectManifestSchema = z.object({
   manifestVersion: z.literal(1),
   composition: CompositionSpecSchema,
@@ -221,6 +289,10 @@ export const ProjectManifestSchema = z.object({
   narratorVoice: VoiceDescriptorSchema,
   music: MusicBedSchema.optional(),
   endCard: EndCardSchema.optional(),
+  /** Genesis-1: the project's AI provider/model choices + faith alignment. OPTIONAL, and
+   *  `manifestVersion` deliberately stays `z.literal(1)` — every manifest already
+   *  committed to a user's repo must keep parsing byte-for-byte unchanged. */
+  aiSettings: AiGenerationSettingsSchema.optional(),
 });
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema>;
 

@@ -141,17 +141,35 @@ export const AI_GENERATION_WORKFLOW_BY_KIND = {
  * `{kind, provider}` against this and rejects out-of-matrix pairs with 422.
  *
  * The two TEXT kinds (`storyboard`/`script`) can run on EITHER provider — both expose a
- * chat/structured-output surface. The four MEDIA kinds (`image`/`narration`/`music`/
- * `video`) are `openrouter` ONLY: Gloo has no media modalities (§9-Q2). Unlike the
- * partial workflow table above, this is a COMPLETE record — the matrix is fully known
- * today even though the media WORKFLOWS land in #32–34 (a matrix-valid pair whose
- * workflow is not yet registered is a DIFFERENT, later failure mode, not a matrix
- * rejection).
+ * chat/structured-output surface. Unlike the partial workflow table above, this is a
+ * COMPLETE record — a matrix-valid pair whose workflow is not registered is a DIFFERENT,
+ * later failure mode, not a matrix rejection.
+ *
+ * ── The media rows, CORRECTED 2026-07-28 (genesis-1 Inspector, decision D1) ──────────
+ *
+ * This table used to read `image: ["openrouter"]` on the authority of design-delta
+ * §9-Q2's "Gloo has no media modalities". Half of that sentence is false, and the halves
+ * were separated by measuring the live host rather than re-reading the doc:
+ *
+ *   - **`image` — Gloo CAN generate images.** Its catalogue carries 11 image-capable
+ *     models (6 image-only, 5 text+image); a real 1024x768 PNG was generated from one and
+ *     decoded, twice. The reason nobody noticed is that they do NOT route through
+ *     chat/completions — that surface answers 400 with "Use the POST /v2/responses
+ *     endpoint instead", and `/v2/responses` is a surface this codebase had never called.
+ *   - **`narration` / `music` / `video` — genuinely absent.** Zero catalogue entries
+ *     match `audio|speech|tts|voice|narrat|music|video`, and the speech, transcription
+ *     and video routes answer **404** (route absent) rather than 405 (route exists, wrong
+ *     method). Gloo's backend is FastAPI, so that distinction is trustworthy — which is
+ *     what makes these NEGATIVES evidence rather than an absence of evidence. Asking for
+ *     `modalities: ["text","audio"]` returns 200 with `message.audio` simply missing.
+ *
+ * So `openrouter`-only is CORRECT for those three, and the Inspector must show Gloo as
+ * present-but-disabled there with a plain reason — not hide it, and not invent a path.
  */
 export const AI_PROVIDERS_BY_KIND = {
   storyboard: ["gloo", "openrouter"],
   script: ["gloo", "openrouter"],
-  image: ["openrouter"],
+  image: ["gloo", "openrouter"],
   narration: ["openrouter"],
   music: ["openrouter"],
   video: ["openrouter"],
