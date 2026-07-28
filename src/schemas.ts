@@ -588,6 +588,53 @@ export const GithubCallbackRequestSchema = z.object({
 });
 export type GithubCallbackRequest = z.infer<typeof GithubCallbackRequestSchema>;
 
+/**
+ * `GET /v1/connections/github/authorize-url` query — the USER-authorization hop for
+ * linking an installation that already exists.
+ *
+ * The install callback cannot cover this case, and not as an edge case: GitHub only
+ * redirects to the App's Setup URL when an installation is CREATED. A user who already
+ * installed the App — a reinstall, an install made from GitHub's own directory, or the
+ * same App registration shared between environments — is sent straight to the
+ * installation's settings page, so nothing ever posts an `installationId` and the
+ * connect flow has no path to completion.
+ *
+ * So we ask GitHub who the user is instead: authorize, then read
+ * `GET /user/installations` and match. Mirrors `RepoAuthorizeUrlQuerySchema` (the
+ * create-repo JIT hop) — same hosted-authorization shape, different destination.
+ */
+export const GithubAuthorizeUrlQuerySchema = z.object({
+  redirectUri: z.string().min(1),
+  state: z.string().min(1),
+});
+export type GithubAuthorizeUrlQuery = z.infer<
+  typeof GithubAuthorizeUrlQuerySchema
+>;
+
+/** `GET /v1/connections/github/authorize-url` response: the hosted GitHub
+ *  user-authorization URL. No user secret crosses this wire. */
+export const GithubAuthorizeUrlResponseSchema = z.object({
+  url: z.string().min(1),
+});
+export type GithubAuthorizeUrlResponse = z.infer<
+  typeof GithubAuthorizeUrlResponseSchema
+>;
+
+/**
+ * `POST /v1/connections/github/link-existing` request: the user-authorization `code`
+ * GitHub redirected back with.
+ *
+ * The code is exchanged server-side for a short-lived user token, used once to read
+ * `GET /user/installations`, and discarded — the same zero-storage posture as the
+ * create-repo hop. Only the resolved installation pointer is persisted.
+ */
+export const GithubLinkExistingRequestSchema = z.object({
+  code: z.string().min(1),
+});
+export type GithubLinkExistingRequest = z.infer<
+  typeof GithubLinkExistingRequestSchema
+>;
+
 /** A stored GitHub App connection on the wire (design-delta §2.3). No token
  *  field exists — the installation id is the only stored credential-pointer.
  *  Named `GithubConnectionStatus` to avoid colliding with the re-exported Prisma
