@@ -59,6 +59,47 @@ describe("Task #10 wire DTOs — sign-in request/response", () => {
     expect(S.YouVersionSignInRequestSchema.safeParse({}).success).toBe(false);
   });
 
+  it("YouVersionSignInRequestSchema accepts the UNVERIFIED display profile", () => {
+    const parsed = S.YouVersionSignInRequestSchema.safeParse({
+      accessToken: "abc",
+      profile: {
+        name: "Ash Srinivas",
+        email: "ash@example.com",
+        profilePicture: "https://example.test/a.jpg",
+      },
+    });
+    expect(parsed.success, JSON.stringify(parsed)).toBe(true);
+  });
+
+  /** `profile` stays optional so a BFF that predates it keeps signing in — the API
+   *  falls back to placeholders rather than 400ing. */
+  it("YouVersionSignInRequestSchema still accepts a bare accessToken", () => {
+    const parsed = S.YouVersionSignInRequestSchema.safeParse({
+      accessToken: "abc",
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.profile).toBeUndefined();
+  });
+
+  it("YouVersionSignInProfileSchema treats every field as optional", () => {
+    expect(S.YouVersionSignInProfileSchema.safeParse({}).success).toBe(true);
+    expect(
+      S.YouVersionSignInProfileSchema.safeParse({ name: "Ash" }).success,
+    ).toBe(true);
+    expect(
+      S.YouVersionSignInProfileSchema.safeParse({ email: "a@b.test" }).success,
+    ).toBe(true);
+  });
+
+  it("YouVersionSignInProfileSchema still rejects wrong TYPES", () => {
+    expect(S.YouVersionSignInProfileSchema.safeParse({ name: 42 }).success).toBe(
+      false,
+    );
+    expect(
+      S.YouVersionSignInProfileSchema.safeParse({ email: null }).success,
+    ).toBe(false);
+  });
+
   it("YouVersionSignInResponseSchema requires token + user + firstSignIn", () => {
     const ok = {
       token: "opaque-session-token",
@@ -134,6 +175,7 @@ describe("Task #10 wire DTOs — barrel exports (no Prisma collision)", () => {
   const exported = [
     "AuthUserSchema",
     "YouVersionSignInRequestSchema",
+    "YouVersionSignInProfileSchema",
     "YouVersionSignInResponseSchema",
     "MeResponseSchema",
     "OnboardingResponseSchema",

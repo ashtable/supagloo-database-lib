@@ -447,10 +447,42 @@ export const AuthUserSchema = z.object({
 });
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 
+/**
+ * UNVERIFIED display fields the browser read out of its YouVersion session.
+ *
+ * These are deliberately NOT trustworthy and nothing may key off them. The reason is a
+ * property of the provider, verified live 2026-07-27: a YouVersion access token carries
+ * `{sub, scope, iss, exp, iat, jti, client_id}` and NO profile claims, there is no
+ * `userinfo_endpoint` in its OIDC discovery document, and `@youversion/platform-core`
+ * never exposes the raw `id_token` (only fields it has already decoded, and it does not
+ * verify signatures). So the server CANNOT independently obtain a name or an email —
+ * the only options are to take the client's word for them or to have none at all.
+ *
+ * That is safe only because of where the trust boundary sits: `User.youversionUserId`
+ * comes from `sub` on a SIGNATURE-VERIFIED access token and is the `@unique` identity
+ * key every lookup and every authorization decision uses. `User.email` is a plain
+ * non-unique column that is never looked up by. If either of those two facts ever
+ * changes, this schema becomes a privilege-escalation vector and must be revisited.
+ */
+export const YouVersionSignInProfileSchema = z.object({
+  /** Display name. Absent for a sparse YouVersion profile. */
+  name: z.string().optional(),
+  email: z.string().optional(),
+  /** Avatar URL template from the SDK; stored for display only. */
+  profilePicture: z.string().optional(),
+});
+export type YouVersionSignInProfile = z.infer<
+  typeof YouVersionSignInProfileSchema
+>;
+
 /** `POST /v1/auth/youversion` request: the YouVersion access token the browser
- *  obtained client-side and the BFF forwards for server-side verification. */
+ *  obtained client-side and the BFF forwards for server-side verification, plus the
+ *  optional UNVERIFIED {@link YouVersionSignInProfileSchema} display fields. `profile`
+ *  is optional so an older BFF keeps working — sign-in then falls back to placeholders
+ *  rather than failing. */
 export const YouVersionSignInRequestSchema = z.object({
   accessToken: z.string().min(1),
+  profile: YouVersionSignInProfileSchema.optional(),
 });
 export type YouVersionSignInRequest = z.infer<
   typeof YouVersionSignInRequestSchema
