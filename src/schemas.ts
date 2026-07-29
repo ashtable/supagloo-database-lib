@@ -124,11 +124,25 @@ export type CompositionSpec = z.infer<typeof CompositionSpecSchema>;
  *  narration concatenated (§7 workflow 7, decision D5), so it lives here on the
  *  project-scoped voice rather than per scene. Mirrors `MusicBed.assetKey`. Being
  *  optional keeps `GeneratedStoryboardSchema`/`NarrationSpecSchema` (which reuse
- *  this schema) unaffected — the LLM/synth inputs simply omit it. */
+ *  this schema) unaffected — the LLM/synth inputs simply omit it.
+ *
+ *  Feature 1: `voiceId` is the CHOSEN PROVIDER VOICE ID (e.g. `"zac"`), and it is the
+ *  only field on this object a provider ever sees. `description`/`label` are freeform
+ *  PROSE ("JAMES EARL JONES-STYLE"); they were written, validated, persisted, committed
+ *  and snapshotted, and read by zero provider-facing code, because OpenRouter's speech
+ *  endpoint takes a NAMED voice and no provider publishes a voice-enumeration API
+ *  (verified live 2026-07-29). The studio therefore ships a curated per-model list and
+ *  persists the id the user picked; the prose stays as the human-readable intent that
+ *  the storyboard LLM also produces.
+ *
+ *  OPTIONAL, and `manifestVersion` stays `z.literal(1)` — every manifest already
+ *  committed to a user's repo must keep parsing byte-for-byte unchanged. Absent ⇒ the
+ *  synthesis path falls back to its default provider voice, exactly as before. */
 export const VoiceDescriptorSchema = z.object({
   description: z.string().min(1),
   label: z.string().min(1).optional(),
   assetKey: z.string().min(1).nullable().optional(),
+  voiceId: z.string().min(1).optional(),
 });
 export type VoiceDescriptor = z.infer<typeof VoiceDescriptorSchema>;
 
@@ -282,6 +296,37 @@ export const AiGenerationSettingsSchema = z.object({
 });
 export type AiGenerationSettings = z.infer<typeof AiGenerationSettingsSchema>;
 
+/**
+ * Feature 2 — the project's ORIGIN passage, chosen in the New-project wizard's step 2
+ * (figure 18a) before any scene exists.
+ *
+ * PROJECT-level, not per-scene, and necessarily so. `ManifestSceneSchema` requires
+ * `scriptText`/`visualPrompt`/`name`/`durationSeconds` alongside `reference`/
+ * `translation`, so seeding the selection as a scene would mean INVENTING generated
+ * content the user never asked for and committing it to their GitHub repo — content
+ * which `STORYBOARD_GENERATED` then replaces wholesale on the very next action. The
+ * origin passage is also project-shaped in fact: it survives a re-plan; a scene does not.
+ *
+ * `passageId` is the YouVersion USFM **exactly as the chapters/verses routes handed it
+ * out**. It is ECHOED, never constructed — `contracts.ts` closed constructing one as
+ * residual risk, and nothing here re-opens it.
+ *
+ * `language` is the picker's BCP-47 tag (`"en"`), persisted so a non-English project
+ * stops being silently re-resolved against English (`sceneScriptureContext` used to
+ * hardcode `"eng"`).
+ *
+ * **It deliberately does NOT carry the passage TEXT.** The manifest is committed into
+ * the user's (possibly public) repo, the verse text is third-party licensed content, and
+ * `passageId` is enough to re-fetch it.
+ */
+export const ManifestScriptureSchema = z.object({
+  reference: z.string().min(1),
+  translation: TranslationSchema,
+  language: z.string().min(1).optional(),
+  passageId: z.string().min(1).optional(),
+});
+export type ManifestScripture = z.infer<typeof ManifestScriptureSchema>;
+
 export const ProjectManifestSchema = z.object({
   manifestVersion: z.literal(1),
   composition: CompositionSpecSchema,
@@ -289,6 +334,10 @@ export const ProjectManifestSchema = z.object({
   narratorVoice: VoiceDescriptorSchema,
   music: MusicBedSchema.optional(),
   endCard: EndCardSchema.optional(),
+  /** Feature 2: the passage this project was created from (wizard step 2). OPTIONAL, and
+   *  `manifestVersion` deliberately stays `z.literal(1)` — every manifest already
+   *  committed to a user's repo must keep parsing byte-for-byte unchanged. */
+  scripture: ManifestScriptureSchema.optional(),
   /** Genesis-1: the project's AI provider/model choices + faith alignment. OPTIONAL, and
    *  `manifestVersion` deliberately stays `z.literal(1)` — every manifest already
    *  committed to a user's repo must keep parsing byte-for-byte unchanged. */
@@ -421,9 +470,24 @@ export const NarrationSceneSchema = z.object({
 });
 export type NarrationScene = z.infer<typeof NarrationSceneSchema>;
 
-/** Input to narration (TTS) synthesis: the voice descriptor + per-scene scripts. */
+/** Input to narration (TTS) synthesis: the voice descriptor + per-scene scripts.
+ *
+ *  Feature 1: `voiceId` is the CHOSEN PROVIDER VOICE ID, and it is a TOP-LEVEL sibling of
+ *  `voice` rather than a property of it — deliberately. The provider takes a named voice
+ *  and nothing else; `voice.description`/`voice.label` are prose that no provider request
+ *  has a field for (`requestSpeech` sends exactly
+ *  `{model, input, voice, response_format}`). Separating the one value that is SENT from
+ *  the prose that is not makes the synthesis boundary honest about what it can act on.
+ *
+ *  It is also what lets the fix ship ahead of the db-lib gitlink bump: this schema is
+ *  wrapped by `GenerateNarrationInputSchema = NarrationSpecSchema.passthrough()`, so a
+ *  top-level key survives an older pinned copy of this file untouched, exactly as
+ *  `faithAlignment` already does for image generations.
+ *
+ *  Absent ⇒ the synthesis path falls back to its default provider voice. */
 export const NarrationSpecSchema = z.object({
   voice: VoiceDescriptorSchema,
+  voiceId: z.string().min(1).optional(),
   scenes: z.array(NarrationSceneSchema).min(1),
 });
 export type NarrationSpec = z.infer<typeof NarrationSpecSchema>;
@@ -1114,6 +1178,11 @@ export const CreateProjectRequestSchema = z.object({
   repoName: z.string().min(1),
   visibility: RepoVisibilitySchema,
   createdFrom: ProjectCreatedFromSchema,
+  /** Feature 2: the passage picked in the wizard's step 2, seeded into the scaffolded
+   *  manifest's `scripture` block. OPTIONAL — a `blank` project omits it and the
+   *  scaffolded manifest is byte-identical to today's. `createdFrom` needs no change:
+   *  `"passage"` has been in `ProjectCreatedFromSchema` since Task #7. */
+  scripture: ManifestScriptureSchema.optional(),
 });
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
@@ -1261,6 +1330,10 @@ export const CreateRepoRequestSchema = z.object({
   repoName: z.string().min(1),
   visibility: RepoVisibilitySchema,
   createdFrom: ProjectCreatedFromSchema,
+  /** Feature 2, the OTHER wizard payload site. The create-new-repo tab posts here and the
+   *  existing-empty tab posts to `POST /v1/projects`; carrying the passage on only one of
+   *  them would make the feature work on one tab and silently do nothing on the other. */
+  scripture: ManifestScriptureSchema.optional(),
 });
 export type CreateRepoRequest = z.infer<typeof CreateRepoRequestSchema>;
 
