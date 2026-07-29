@@ -319,6 +319,140 @@ describe("Task #35 schema — VoiceDescriptorSchema.assetKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// B2a. VoiceDescriptorSchema.voiceId — the CHOSEN provider voice (feature 1)
+// ---------------------------------------------------------------------------
+//
+// The bug this closes: `description` was written, validated, persisted, committed and
+// snapshotted, and read by ZERO provider-facing code — the provider always received the
+// literal "alloy". There is no voice-enumeration API at any provider (verified live
+// 2026-07-29), so the studio ships a curated per-model list and persists the id the user
+// picked. `description`/`label` stay freeform PROSE; `voiceId` is the machine value.
+//
+// OPTIONAL, and `manifestVersion` stays `z.literal(1)`: every manifest already committed
+// to a user's repo must keep parsing byte-for-byte unchanged.
+
+describe("Feature 1 schema — VoiceDescriptorSchema.voiceId", () => {
+  it("U-V1: accepts a voiceId, and stays valid without one", () => {
+    expect(
+      S.VoiceDescriptorSchema.safeParse({ description: "warm baritone" }).success,
+    ).toBe(true);
+    expect(
+      S.VoiceDescriptorSchema.safeParse({
+        description: "warm baritone",
+        voiceId: "zac",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("U-V2: rejects an empty-string voiceId (an id, not prose)", () => {
+    expect(
+      S.VoiceDescriptorSchema.safeParse({ description: "warm baritone", voiceId: "" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("U-V3: round-trips a manifest carrying the chosen voice id", () => {
+    const withVoice = {
+      ...validManifest,
+      narratorVoice: { ...validManifest.narratorVoice, voiceId: "zac" },
+    };
+    const res = S.ProjectManifestSchema.safeParse(withVoice);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    if (res.success) expect(res.data).toEqual(withVoice);
+  });
+
+  it("U-V4: a v1 manifest with NO voiceId still parses, unchanged", () => {
+    const res = S.ProjectManifestSchema.safeParse(validManifest);
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.data).toEqual(validManifest);
+      expect("voiceId" in res.data.narratorVoice).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B2b. ProjectManifest.scripture — the project's ORIGIN passage (feature 2)
+// ---------------------------------------------------------------------------
+//
+// The new-project wizard collects language/translation/book/chapter BEFORE any scene
+// exists, so the selection has nowhere per-scene to live: `ManifestSceneSchema` requires
+// `reference`/`translation` AND `scriptText`/`visualPrompt`, so seeding a scene would mean
+// inventing generated content — which `STORYBOARD_GENERATED` then deletes wholesale.
+// Project-scoped is also what the datum IS: it survives a re-plan; a scene does not.
+//
+// Deliberately does NOT carry the passage TEXT: the manifest is committed into the user's
+// (possibly public) GitHub repo, the text is third-party copyrighted content, and
+// `passageId` is enough to re-fetch it.
+//
+// `passageId` is the ECHOED YouVersion usfm — never constructed (`contracts.ts` closed
+// that as residual risk), which is why it is optional and opaque here.
+
+describe("Feature 2 schema — ProjectManifestSchema.scripture", () => {
+  const scripture = {
+    reference: "Psalm 121",
+    translation: "ASV",
+    language: "en",
+    passageId: "PSA.121",
+  };
+
+  it("U-W1: accepts the full scripture block and round-trips it", () => {
+    const withScripture = { ...validManifest, scripture };
+    const res = S.ProjectManifestSchema.safeParse(withScripture);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    if (res.success) expect(res.data).toEqual(withScripture);
+  });
+
+  it("U-W2: language and passageId are optional; reference + translation are not", () => {
+    expect(
+      S.ManifestScriptureSchema.safeParse({
+        reference: "Psalm 121",
+        translation: "ASV",
+      }).success,
+    ).toBe(true);
+    expect(
+      S.ManifestScriptureSchema.safeParse({ reference: "Psalm 121" }).success,
+    ).toBe(false);
+    expect(S.ManifestScriptureSchema.safeParse({ translation: "ASV" }).success).toBe(
+      false,
+    );
+  });
+
+  it("U-W3: rejects empty strings — an absent choice is the ABSENT block, never a blank one", () => {
+    for (const bad of [
+      { reference: "", translation: "ASV" },
+      { reference: "Psalm 121", translation: "" },
+      { reference: "Psalm 121", translation: "ASV", language: "" },
+      { reference: "Psalm 121", translation: "ASV", passageId: "" },
+    ]) {
+      expect(S.ManifestScriptureSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("U-W4: a v1 manifest with NO scripture still parses, unchanged, at literal version 1", () => {
+    const res = S.ProjectManifestSchema.safeParse(validManifest);
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.data).toEqual(validManifest);
+      expect("scripture" in res.data).toBe(false);
+      expect(res.data.manifestVersion).toBe(1);
+    }
+  });
+
+  it("U-W5: refuses to carry the passage TEXT (an unknown key is stripped, never persisted)", () => {
+    const res = S.ManifestScriptureSchema.safeParse({
+      reference: "Psalm 121",
+      translation: "ASV",
+      text: "I will lift up mine eyes unto the hills",
+    });
+    expect(res.success).toBe(true);
+    if (res.success) expect("text" in res.data).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // B3. Render-bug fields: per-scene narration, the still/clip discriminator, and the
 //     MEASURED music length (plan D5). Every one is OPTIONAL — genesis-1's committed
 //     manifest is already `manifestVersion: 1` and must keep parsing untouched.
@@ -537,6 +671,36 @@ describe("Task #7 schemas — NarrationSpecSchema (audio synth input)", () => {
     expect(
       S.NarrationSpecSchema.safeParse({ ...validNarrationSpec, scenes: [] }).success,
     ).toBe(false);
+  });
+
+  it("U-V5: carries an OPTIONAL top-level voiceId — the only value a provider is sent", () => {
+    const withVoiceId = { ...validNarrationSpec, voiceId: "zac" };
+    const res = S.NarrationSpecSchema.safeParse(withVoiceId);
+    expect(res.success, JSON.stringify(res)).toBe(true);
+    if (res.success) expect(res.data.voiceId).toBe("zac");
+
+    const bare = S.NarrationSpecSchema.safeParse(validNarrationSpec);
+    expect(bare.success).toBe(true);
+    if (bare.success) expect("voiceId" in bare.data).toBe(false);
+
+    expect(
+      S.NarrationSpecSchema.safeParse({ ...validNarrationSpec, voiceId: "" }).success,
+    ).toBe(false);
+  });
+
+  it("U-V6: GenerateNarrationInputSchema PASSES THROUGH voiceId — the pre-bump path", () => {
+    // This is why `voiceId` is a top-level sibling of `voice` rather than a property of
+    // it: `.passthrough()` applies to THIS object's unknown keys, so a consumer still
+    // pinned to an older copy of this file forwards the id untouched. A key nested inside
+    // `voice` would be stripped by `VoiceDescriptorSchema`, which is a plain `z.object`.
+    const res = S.GenerateNarrationInputSchema.safeParse({
+      ...validNarrationSpec,
+      voiceId: "zac",
+    });
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect((res.data as Record<string, unknown>).voiceId).toBe("zac");
+    }
   });
 });
 

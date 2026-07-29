@@ -55,6 +55,68 @@ describe("Task #18 — CreateProjectRequestSchema", () => {
   });
 });
 
+// Feature 2 — the New-project wizard's step 2 collects the passage BEFORE the project
+// exists, so the scripture selection has to travel on the CREATE request and be seeded
+// into the scaffolded manifest. `createdFrom: "passage"` needs no schema change: the enum
+// has carried it since Task #7.
+describe("Feature 2 — CreateProjectRequestSchema.scripture", () => {
+  const scripture = {
+    reference: "Psalm 121",
+    translation: "ASV",
+    language: "en",
+    passageId: "PSA.121",
+  };
+
+  it("U-W6: accepts a create request carrying the picked passage with createdFrom passage", () => {
+    expect(
+      S.CreateProjectRequestSchema.safeParse({
+        ...VALID_CREATE,
+        createdFrom: "passage",
+        scripture,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("U-W7: scripture stays OPTIONAL — a blank project is byte-identical to today", () => {
+    const res = S.CreateProjectRequestSchema.safeParse(VALID_CREATE);
+    expect(res.success).toBe(true);
+    if (res.success) expect("scripture" in res.data).toBe(false);
+  });
+
+  it("U-W8: a structurally invalid scripture block is REJECTED, not silently dropped", () => {
+    // Zod `.strip()` means an UNKNOWN key vanishes without complaint; a KNOWN key with a
+    // bad value must not. Otherwise the wizard appears to work and persists nothing.
+    expect(
+      S.CreateProjectRequestSchema.safeParse({
+        ...VALID_CREATE,
+        scripture: { reference: "Psalm 121" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("U-W9: CreateRepoRequestSchema carries it too — BOTH wizard payload sites", () => {
+    // The create-new-repo tab posts to `/v1/projects/create-repo`, the existing-empty tab
+    // to `/v1/projects`. A field on only one of them makes the feature work on one tab.
+    expect(
+      S.CreateRepoRequestSchema.safeParse({
+        code: "gho_code",
+        repoName: "psalm-121",
+        visibility: "private",
+        createdFrom: "passage",
+        scripture,
+      }).success,
+    ).toBe(true);
+    const bare = S.CreateRepoRequestSchema.safeParse({
+      code: "gho_code",
+      repoName: "psalm-121",
+      visibility: "private",
+      createdFrom: "blank",
+    });
+    expect(bare.success).toBe(true);
+    if (bare.success) expect("scripture" in bare.data).toBe(false);
+  });
+});
+
 describe("Task #18 — CreateProjectResponseSchema", () => {
   it("accepts { projectId, jobId }", () => {
     expect(
