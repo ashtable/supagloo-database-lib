@@ -312,7 +312,7 @@ export type AiGenerationSettings = z.infer<typeof AiGenerationSettingsSchema>;
  * residual risk, and nothing here re-opens it.
  *
  * `language` is the picker's BCP-47 tag (`"en"`), persisted so a non-English project
- * stops being silently re-resolved against English (`sceneScriptureContext` used to
+ * stops being silently re-resolved against English (the studio's generation context used to
  * hardcode `"eng"`).
  *
  * **It deliberately does NOT carry the passage TEXT.** The manifest is committed into
@@ -404,11 +404,33 @@ export type GeneratedScript = z.infer<typeof GeneratedScriptSchema>;
 // `.passthrough()` lets that richer contract add fields without breaking this workflow.
 // ---------------------------------------------------------------------------
 
-/** The scripture a generation is based on. Its PRESENCE on the input drives the workflow's
- *  optional `fetchScripturePassage` step (VOTD/passage origins); topic-origin generations
- *  omit it. `translation` is the abbreviation the user selected (validated against the live
- *  YouVersion collection at generation time, §9-Q10); `language` scopes the collection call. */
+/**
+ * The scripture a generation is based on. Its PRESENCE on the input drives the workflow's
+ * optional `fetchScripturePassage` step (VOTD/passage origins); topic-origin generations omit
+ * it. `translation` is the abbreviation the user selected (validated against the live
+ * YouVersion collection at generation time, §9-Q10); `language` scopes the collection call.
+ *
+ * ── `reference` IS A USFM PASSAGE ID, NOT A HUMAN REFERENCE ─────────────────────────
+ * Documented explicitly on 2026-07-30 because the ambiguity of the field NAME caused a live
+ * defect. This value is passed verbatim to YouVersion's passage endpoint, whose only accepted
+ * form is a provider-issued USFM id (`"JHN.3.16"`, `"PSA.23"`, `"PSA.121.1-5"`). A human
+ * reference 404s — measured: `GET /v1/bibles/111/passages/Psalm%2023` →
+ * `{"message":"Bible passage Psalm23 for version 111 not found"}` — which dbos raises as a
+ * PERMANENT `YouVersionPassageNotFoundError` that fails the entire generation. The studio's
+ * per-scene "rewrite this line" sent `ManifestScene.reference`, a human string, into this
+ * field until it was fixed; producers must send `ManifestScripture.passageId`.
+ *
+ * The id is ECHOED, never constructed (`ManifestScriptureSchema`'s note applies here too):
+ * it is a value an enumeration route handed out, or one this host itself echoed back for a
+ * `+`-joined list of such values.
+ *
+ * `language` accepts BOTH the ISO-639-3 default (`"eng"`) and the picker's BCP-47 tags
+ * (`"en"`) — verified to return identical collections on the live host — but a project's own
+ * stored tag should always be preferred, so a non-English project is not re-resolved against
+ * English.
+ */
 export const ScripturePassageRequestSchema = z.object({
+  /** A provider-issued USFM passage id — see the note above. NEVER a human reference. */
   reference: z.string().min(1),
   translation: z.string().min(1),
   language: z.string().min(1).default("eng"),

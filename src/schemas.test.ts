@@ -1267,6 +1267,14 @@ describe("Task #7 schemas — barrel exports", () => {
     "JobStatusSchema",
     "TranslationSchema",
     "ProjectManifestSchema",
+    // Feature 2 — the project's ORIGIN passage, and the generation-input block the passage
+    // fetch reads. Listed 2026-07-30: these were the two manifest/generation sub-schemas
+    // this guard did not name, and both are consumed BY NAME outside this package (the api
+    // does `CreateProjectRequestSchema.extend({scripture: ManifestScriptureSchema…})`, and
+    // dbos validates `AiGeneration.input` through `ScripturePassageRequestSchema`). An
+    // accidental non-export would surface as a build failure two repos away, not here.
+    "ManifestScriptureSchema",
+    "ScripturePassageRequestSchema",
     "GeneratedStoryboardSchema",
     "SceneVisualPromptSchema",
     "NarrationSpecSchema",
